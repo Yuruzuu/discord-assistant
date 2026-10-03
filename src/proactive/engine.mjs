@@ -4,7 +4,7 @@ export function isQuestion(content) {
   return /\?|^(?:\s|<@!?\d+>)*(?:what|why|how|where|when|who|can|could|would|should|is|are|does|do|help)\b/i.test(content || '');
 }
 
-export function createProactiveEngine({ botUserId, guildId, channelId, directMessages = false, mode = 'mentions', batchWindowMs = 1500, cooldownMs = 5000, maxRepliesPerMinute = 6, resolveReplyAuthor, getContext, generateReply, sendReplies, startTyping = () => () => {}, now = Date.now, sleep = wait, onStatus = () => {} }) {
+export function createProactiveEngine({ botUserId, guildId, channelId, directMessages = false, mode = 'mentions', batchWindowMs = 1500, cooldownMs = 5000, maxRepliesPerMinute = 6, resolveReplyAuthor, getContext, generateReply, sendReplies, parseCommand = () => null, handleCommands, startTyping = () => () => {}, now = Date.now, sleep = wait, onStatus = () => {} }) {
   const pending = new Map();
   const queue = [];
   const seen = new Set();
@@ -27,33 +27,37 @@ export function createProactiveEngine({ botUserId, guildId, channelId, directMes
     report();
     try {
       while (queue.length && !stopped) {
+        const commandBatch = queue[0].kind === 'command';
         const timestamp = now();
         while (replyTimes[0] <= timestamp - 60000) replyTimes.shift();
         const delay = Math.max(cooldownMs - (timestamp - lastReplyAt), replyTimes.length >= maxRepliesPerMinute ? replyTimes[0] + 60000 - timestamp : 0);
-        if (delay > 0) {
+        if (!commandBatch && delay > 0) {
           try { await sleep(delay, undefined, { signal: cancellation.signal }); }
           catch (error) { if (stopped) break; throw error; }
           continue;
         }
         const batch = queue.shift();
-        replyTimes.push(now());
-        lastReplyAt = now();
+        if (!commandBatch) { replyTimes.push(now()); lastReplyAt = now(); }
         const stopTyping = startTyping(cancellation.signal);
         let streamed = 0;
         try {
-          const context = await getContext(batch.messages, cancellation.signal);
-          cancellation.signal.throwIfAborted();
-          const response = await generateReply({ ...context, triggerMessages: batch.messages, mode }, cancellation.signal, { onMessage: async (message, index, deliverySignal) => {
-            if (index !== streamed || streamed >= 5) throw new Error('Reply bubbles arrived out of order');
+          let response;
+          if (commandBatch) response = await handleCommands(batch.messages, cancellation.signal);
+          else {
+            const context = await getContext(batch.messages, cancellation.signal);
             cancellation.signal.throwIfAborted();
-            const receipt = await sendReplies([message], batch.messages.at(-1), deliverySignal || cancellation.signal, { offset: streamed });
-            if (streamed === 0) statistics.lastFirstResponseMs = now() - batch.firstReceivedAt;
-            streamed += 1;
-            statistics.sentMessages += receipt.sentMessages.length;
-            statistics.streamedMessages += receipt.sentMessages.length;
-            lastReplyAt = now();
-            report();
-          } });
+            response = await generateReply({ ...context, triggerMessages: batch.messages, mode }, cancellation.signal, { onMessage: async (message, index, deliverySignal) => {
+              if (index !== streamed || streamed >= 5) throw new Error('Reply bubbles arrived out of order');
+              cancellation.signal.throwIfAborted();
+              const receipt = await sendReplies([message], batch.messages.at(-1), deliverySignal || cancellation.signal, { offset: streamed });
+              if (streamed === 0) statistics.lastFirstResponseMs = now() - batch.firstReceivedAt;
+              streamed += 1;
+              statistics.sentMessages += receipt.sentMessages.length;
+              statistics.streamedMessages += receipt.sentMessages.length;
+              lastReplyAt = now();
+              report();
+            } });
+          }
           if (!response.shouldReply || stopped) { statistics.skipped += batch.messages.length; continue; }
           cancellation.signal.throwIfAborted();
           const remaining = response.messages.slice(streamed);
@@ -109,14 +113,16 @@ export function createProactiveEngine({ botUserId, guildId, channelId, directMes
     if (!directMessages && !existing && !mentioned && !repliesToBot && mode !== 'all' && !(mode === 'questions' && isQuestion(message.content))) {
       statistics.skipped += 1; report(); return false;
     }
+    const kind = parseCommand(message) ? 'command' : 'chat';
+    if (existing && existing.kind !== kind) { flush(authorId); existing = null; }
     if (!existing && queue.length + pending.size >= 20) { statistics.skipped += 1; report(); return false; }
 
-    const batch = existing || { messages: [], firstReceivedAt: now(), timer: null };
+    const batch = existing || { messages: [], firstReceivedAt: now(), timer: null, kind };
     batch.messages.push(message);
     statistics.triggered += 1;
     clearTimeout(batch.timer);
     pending.set(authorId, batch);
-    if (batch.messages.length >= 5 || now() - batch.firstReceivedAt >= 5000) flush(authorId);
+    if (kind === 'command' || batch.messages.length >= 5 || now() - batch.firstReceivedAt >= 5000) flush(authorId);
     else batch.timer = setTimeout(flush, batchWindowMs, authorId);
     report();
 

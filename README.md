@@ -222,11 +222,26 @@ at most six model attempts per minute. Nova defaults to `gpt-6.1-sol`,
 The defaults are independent of the global Codex model settings. Startup can
 override `model`, `reasoningEffort` or `serviceTier`; `"default"` selects Standard
 service. See the [Codex configuration reference](https://learn.chatgpt.com/docs/config-file/config-reference).
-The worker uses
-your Codex quota and existing saved CLI login. It runs ephemerally with shell,
-plugin, hook and web-search tools disabled, and does not receive the Discord bot
-token in its environment. The generated reply is checked against an output
-schema and the available expression catalog before sending.
+The worker uses your Codex quota and existing saved CLI login. Each conversation
+keeps one warm Codex app-server process and one ephemeral, in-memory thread.
+Later messages continue that thread, with nearby context sent incrementally.
+This preserves conversation state and allows prompt-cache reuse; actual cache
+hits depend on the service and are reported in `conversation.cachedInputTokens`.
+DM and server threads are separate. Stopping/restarting a listener discards its
+ephemeral conversation; approved memory survives independently.
+
+Shell, plugin, hook, web-search and external MCP tools are disabled in the worker.
+It receives no Discord token and uses a temporary, read-only permission profile.
+That profile is only an in-memory worker override; it does not edit Codex's
+global configuration. The implementation is validated with Codex CLI 0.160.0.
+
+Complete reply bubbles are validated and sent as the model streams them. The
+first bubble gives a short useful answer; later bubbles add details. Raw partial
+tokens and reasoning are never posted. Each bubble has a stable nonce, the first
+keeps the native reply reference, and confirmed bubbles are not sent again at
+turn completion. A failure after an early bubble stops the rest of the reply.
+`statistics.lastFirstResponseMs` measures the most recent first-send delay from
+local message receipt, and `statistics.streamedMessages` counts streamed sends.
 
 Replies use the native reply feature and can be a few playful short bubbles.
 The bot shows a typing indicator while gathering context, generating a reply
@@ -271,6 +286,28 @@ statistics. `discord_stop_direct_messages` stops DM replies independently of
 server listeners. DM mode stays active while its background process and computer
 are running, and does not auto-start after a restart. It only sees the owner's
 conversation with the bot, not personal conversations with other Discord users.
+
+## Owner-controlled memory
+
+Each conversation has its own private `memory.md` under
+`~/.local/share/discord-mcp/memory/<account-and-conversation>/` (or
+`XDG_DATA_HOME`). DM memories are not injected into server threads. You can edit
+the file directly; Nova reads the current contents before replying. New files
+start empty, and ordinary chat is never automatically saved.
+
+Only owner `291140236979732480` can issue these text commands:
+
+- `remember this: I prefer short replies` saves exactly the approved note.
+- Reply natively to a message with `remember this` to approve its text.
+- `show memory` shows the saved notes, with a bounded preview for long files.
+- `consolidate memory` formats and deduplicates approved text without inventing
+  facts or inferring memories from chat. Consolidation runs only when requested.
+
+In a mentions-only server channel, mention Nova or reply to Nova while issuing
+the command. In the owner DM, no mention is required. Notes are limited to 2000
+characters each and the file to 16 KiB. Saves use private permissions, serialized
+writes and atomic replacement, with a check for concurrent manual edits. Status
+includes `memoryFile` so the owner can locate the live file.
 
 ## Periodic callers
 

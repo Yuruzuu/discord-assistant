@@ -14,6 +14,8 @@ import { assertOwnerDirectMessageChannel, directMessageOwnerId } from './target.
 import { startTypingIndicator } from './typing.mjs';
 import { replyDefaults } from './reply-defaults.mjs';
 import { createReplySender } from './reply-sender.mjs';
+import { createMemoryStore, memoryPath, parseMemoryCommand } from './memory.mjs';
+import { createMemoryCommandHandler } from './memory-commands.mjs';
 
 async function main() {
   const filename = process.argv[2];
@@ -93,13 +95,21 @@ async function main() {
     ]);
     if (configuration.directMessages) assertOwnerDirectMessageChannel(channel);
     const scope = { channelId: configuration.channelId, guildId: guild?.id || null, directMessages: Boolean(configuration.directMessages) };
+    const memory = createMemoryStore(memoryPath({ ...configuration, accountId: account.id }));
+    await memory.load();
+    state.memoryFile = memory.filename;
     generateReply = createCodexResponder({ command: configuration.codexCommand, model: state.model, reasoningEffort: state.reasoningEffort, serviceTier: state.serviceTier, scope });
     await generateReply.warmup();
     const conversationContext = createConversationContext(client, { bot, guild, channel, directMessages: configuration.directMessages, gifUrls: configuration.gifUrls });
     engine = createProactiveEngine({
       ...configuration, botUserId: bot.id,
       resolveReplyAuthor: async (messageId) => (await client.getMessage(configuration.channelId, messageId)).author?.id,
-      getContext: conversationContext,
+      getContext: async () => {
+        const [context, saved] = await Promise.all([conversationContext(), memory.load()]);
+        return { ...context, approvedMemory: saved.text };
+      },
+      parseCommand: (message) => parseMemoryCommand(message, bot.id),
+      handleCommands: createMemoryCommandHandler(memory, bot.id, (messageId) => client.getMessage(configuration.channelId, messageId)),
       startTyping: (signal) => startTypingIndicator((typingSignal) => client.triggerTyping(configuration.channelId, { signal: typingSignal }), { signal }),
       generateReply,
       sendReplies: createReplySender(service, configuration),

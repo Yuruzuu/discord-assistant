@@ -3,6 +3,8 @@ import test from 'node:test';
 import { setTimeout } from 'node:timers/promises';
 import { createProactiveEngine } from '../src/proactive/engine.mjs';
 import { startTypingIndicator } from '../src/proactive/typing.mjs';
+import { parseMemoryCommand } from '../src/proactive/memory.mjs';
+import { directMessageOwnerId } from '../src/proactive/target.mjs';
 
 const guildId = '100000000000000001';
 const channelId = '200000000000000001';
@@ -231,5 +233,23 @@ test('generation failure after streaming preserves partial receipts and stops th
     await until(() => engine.status().errors === 1);
     assert.equal(sends.length, 1);
     assert.equal(engine.status().sentMessages, 1);
+  } finally { engine.stop(); }
+});
+
+test('owner memory commands bypass the model and keep adjacent chat out of the saved command batch', async () => {
+  const commands = [];
+  const { engine, generations, sends } = fixture({ batchWindowMs: 10,
+    parseCommand: (message) => parseMemoryCommand(message, botUserId),
+    handleCommands: async (messages) => { commands.push(...messages); return { shouldReply: true, messages: [{ content: 'Saved' }] }; },
+  });
+  try {
+    const owner = { id: directMessageOwnerId, bot: false };
+    await engine.receive(message({ author: owner, content: `<@${botUserId}> remember this: approved fact` }));
+    await until(() => sends.length === 1);
+    assert.equal(generations.length, 0);
+    assert.equal(commands.length, 1);
+    await engine.receive(message({ author: owner, content: `<@${botUserId}> normal chat` }));
+    await until(() => generations.length === 1);
+    assert.equal(commands.length, 1);
   } finally { engine.stop(); }
 });
