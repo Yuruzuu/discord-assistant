@@ -99,6 +99,9 @@ that file; `tokenEnv` is an environment variable name, not a token.
 | `discord_list_channels` | List categories, channels, active threads, and optionally archived threads for one server. |
 | `discord_list_tickets` | Find forum posts, threads, and optionally text-channel tickets with parent/category/name/time filters. |
 | `discord_read` | Read a message/channel URL or IDs, auto-select the bot with access, and inline image attachments. |
+| `discord_search_messages` | Search indexed server messages and return up to 250 matches with links and continuation arguments. |
+| `discord_message_context` | Jump to a message and read its surrounding conversation. |
+| `discord_browse_messages` | Browse up to 250 messages at a time with older/newer cursors. |
 | `discord_fetch_attachment` | Fetch one selected image from a message or a direct Discord CDN/media URL. |
 | `discord_check_access` | Diagnose which configured bot can read a guild, channel, or message. |
 | `discord_list_expressions` | List custom emojis and stickers, with ready-to-use emoji markup, sticker IDs, availability, and role restrictions. |
@@ -113,6 +116,28 @@ that file; `tokenEnv` is an environment variable name, not a token.
 The four v1 tools remain as compatibility aliases:
 `discord_get_message`, `discord_read_messages`, `discord_get_channel`, and
 `discord_get_server_info`.
+
+## Search and browse context
+
+`discord_search_messages` uses Discord's guild search endpoint. Supply a
+`guildId` and optional `query`; the default result limit is 250, newest first.
+It supports channel/author/mention filters, reply targets, attachment and embed
+types, pinned state, snowflake bounds, and timestamp/relevance sorting.
+Only messages visible to the selected bot are returned.
+
+Discord's search pages contain at most 25 results, so the tool gathers pages
+until it reaches the requested limit. It retries index-building responses and
+does not treat short search pages as completion. Results include `totalResults`,
+`nextOffset`, `continuation`, indexing state and `offsetLimitReached`. Discord's
+offset window ends at 9975; the tool reports that boundary instead of silently
+claiming a complete search.
+
+Pass a result's message URL to `discord_message_context` to jump into its
+conversation. Context is returned oldest first, with the anchor message and
+older/newer navigation arguments. Use those arguments with
+`discord_browse_messages` to continue browsing, up to 250 messages per call.
+Images are opt-in with `includeImages`; search results provide attachment
+references without downloading them. A deleted anchor remains an error.
 
 ## Sending messages and expressions
 

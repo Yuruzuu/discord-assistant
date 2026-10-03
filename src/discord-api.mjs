@@ -255,6 +255,26 @@ export class DiscordApiClient {
     return this.get(`/guilds/${guildId}/roles`);
   }
 
+  async searchGuildMessages(guildId, parameters) {
+    const query = new URLSearchParams();
+    for (const [key, value] of Object.entries(parameters)) {
+      if (value === undefined || value === null) continue;
+      if (Array.isArray(value)) for (const item of value) query.append(key, String(item));
+      else query.set(key, String(value));
+    }
+    const path = `/guilds/${guildId}/messages/search?${query}`;
+    for (let attempt = 0; attempt <= this.maxRetries; attempt += 1) {
+      const result = await this.get(path);
+      if (result?.code !== 110000) {
+        if (!Array.isArray(result?.messages)) throw new DiscordApiError('Discord returned an invalid message search result', { path, accountId: this.accountId });
+        return result;
+      }
+      if (attempt === this.maxRetries) throw new DiscordApiError('Discord is still indexing this server. Retry the search later.', { status: 202, code: 110000, path, accountId: this.accountId });
+      const delay = Number(result.retry_after);
+      await this.sleep(Number.isFinite(delay) && delay >= 0 ? Math.max(delay * 1000, 250) : 1000);
+    }
+  }
+
   async listGuilds() {
     const guilds = [];
     let after;

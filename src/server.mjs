@@ -5,6 +5,8 @@ import { listExpressions, sendMessage, sendMessageBatch } from './messaging.mjs'
 import { getUserInfo } from './users.mjs';
 import { register, success, writeAnnotations } from './tool-results.mjs';
 import { registerProactiveTools } from './proactive/tools.mjs';
+import { searchMessages } from './search.mjs';
+import { browseMessages } from './message-browser.mjs';
 
 const snowflake = z.string().regex(/^\d{17,20}$/).describe('Discord snowflake ID');
 const messageFields = {
@@ -15,7 +17,7 @@ const messageFields = {
 
 export function createDiscordMcpServer(service) {
   const server = new McpServer(
-    { name: 'discord-readonly', version: '2.1.0' },
+    { name: 'discord-readonly', version: '2.2.0' },
     {
       instructions:
         'Discord bot access. Prefer discord_read for URLs and discord_reply for answering an existing message. Use discord_list_servers and discord_list_channels to resolve names, discord_user_info for profiles, and discord_list_expressions for custom emojis/stickers. Be playful and concise; use server emojis naturally and discord_send_messages for a few short conversational bubbles. Only send when requested or under an explicitly started proactive listener. Start proactive mode only when asked; stop it when asked.',
@@ -78,6 +80,49 @@ export function createDiscordMcpServer(service) {
     },
   }, async (args) => {
     const result = await service.read(args);
+    return success(result.structured, result.images);
+  });
+
+  register(server, 'discord_search_messages', {
+    title: 'Search Discord Server Messages',
+    description: 'Search Discord indexed messages across bot-accessible server channels. Returns up to 250 matches by paging Discord search results, with message links and continuation arguments. Default sort is newest first. Use discord_message_context to jump into a result conversation.',
+    inputSchema: {
+      guildId: snowflake, query: z.string().max(1024).default(''),
+      channelIds: z.array(snowflake).max(500).default([]), authorIds: z.array(snowflake).max(100).default([]),
+      mentionsUserIds: z.array(snowflake).max(100).default([]), repliedToMessageIds: z.array(snowflake).max(100).default([]),
+      has: z.array(z.enum(['image', 'sound', 'video', 'file', 'sticker', 'embed', 'link', 'poll', 'snapshot'])).default([]),
+      embedTypes: z.array(z.enum(['image', 'video', 'gif', 'sound', 'article'])).default([]),
+      beforeId: snowflake.optional(), afterId: snowflake.optional(), pinned: z.boolean().optional(),
+      includeNsfw: z.boolean().default(false), sortBy: z.enum(['timestamp', 'relevance']).default('timestamp'),
+      sortOrder: z.enum(['asc', 'desc']).default('desc'), limit: z.number().int().min(1).max(250).default(250),
+      offset: z.number().int().min(0).max(9975).default(0), accountId: z.string().optional(),
+    },
+  }, async (args) => success(await searchMessages(service, args)));
+
+  register(server, 'discord_message_context', {
+    title: 'Jump to Discord Message Context',
+    description: 'Open a specific message link or message ID and read its surrounding conversation in chronological order. Returns the anchor, up to 250 messages, and arguments for browsing older or newer context. Images are opt-in.',
+    inputSchema: {
+      url: z.string().url().optional(), guildId: snowflake.optional(), channelId: snowflake.optional(), messageId: snowflake.optional(),
+      limit: z.number().int().min(1).max(250).default(50), includeImages: z.boolean().default(false),
+    },
+  }, async (args) => {
+    const source = service.normalizeReadSource(args);
+    if (!source.messageId) throw new Error('Provide a message URL or channelId and messageId');
+    const result = await browseMessages(service, args);
+    return success(result.structured, result.images);
+  });
+
+  register(server, 'discord_browse_messages', {
+    title: 'Browse Discord Conversation History',
+    description: 'Continue through channel history with before/after cursors, or open an around/message anchor. Reads up to 250 messages per call and returns chronological messages plus older/newer navigation arguments.',
+    inputSchema: {
+      url: z.string().url().optional(), guildId: snowflake.optional(), channelId: snowflake.optional(),
+      messageId: snowflake.optional(), before: snowflake.optional(), after: snowflake.optional(), around: snowflake.optional(),
+      limit: z.number().int().min(1).max(250).default(250), includeImages: z.boolean().default(false),
+    },
+  }, async (args) => {
+    const result = await browseMessages(service, args);
     return success(result.structured, result.images);
   });
 

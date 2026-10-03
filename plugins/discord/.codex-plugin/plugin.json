@@ -1,7 +1,7 @@
 {
   "name": "discord",
-  "version": "2.1.0",
-  "description": "Read Discord messages and profiles, send native replies and playful message batches, and start on-demand proactive channel conversations.",
+  "version": "2.2.0",
+  "description": "Search Discord servers and browse message context, read profiles, send native replies and playful batches, and start proactive channel conversations.",
   "author": {
     "name": "Yuruzuu"
   },

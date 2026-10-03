@@ -1,6 +1,6 @@
 ---
 name: use-discord
-description: Read Discord messages, profiles, tickets and images; send native replies and playful message batches with custom emojis, stickers and GIFs; and start or stop on-demand proactive channel conversations.
+description: Search Discord server messages and browse conversation context; read profiles, tickets and images; send native replies and playful batches with server expressions; and control proactive channel conversations.
 ---
 
 Use this plugin's registered Discord MCP tools. Access is through the configured
@@ -8,6 +8,17 @@ bot, not the user's personal account. Existing personal DMs are not available.
 
 ## Find and read
 
+- Use `discord_search_messages` for server-wide text, author, channel,
+  mention or attachment searches. It returns up to 250 indexed matches, message
+  links and continuation arguments. Respect the account's visible-channel scope.
+- Use `discord_message_context` to jump to a result's message URL and read the
+  surrounding conversation. `discord_browse_messages` continues with its
+  older/newer navigation arguments, up to 250 messages at a time. Review enough
+  context to understand a match before replying or drawing conclusions.
+- Search pages can be short while indexing progresses. Follow the returned
+  continuation rather than treating a short page as the end. Report indexing
+  errors and the offset limit when present. Search results do not automatically
+  include surrounding context or download attachments.
 - Use `discord_read` directly for Discord message or channel links. For names,
   resolve the server with `discord_list_servers`, then the channel with
   `discord_list_channels`. Resolve ambiguous names before sending.
