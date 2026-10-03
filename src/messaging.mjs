@@ -46,10 +46,16 @@ function validateMessage({ content, stickerIds = [], gifUrl, nonce, replyToMessa
 export async function sendMessage(service, { guildId, channelId, content, stickerIds = [], gifUrl, replyToMessageId, mentionRepliedUser = false, allowMentions = false, nonce }, { signal } = {}) {
   assertSnowflake(channelId, 'channelId');
   if (guildId) assertSnowflake(guildId, 'guildId');
-  const messageContent = validateMessage({ content, stickerIds, gifUrl, replyToMessageId, mentionRepliedUser, nonce });
+  validateMessage({ content, stickerIds, gifUrl, replyToMessageId, mentionRepliedUser, nonce });
 
   signal?.throwIfAborted();
-  const { account, channel } = await service.resolveChannel(channelId, guildId);
+  const resolution = await service.resolveChannel(channelId, guildId);
+
+  return sendResolvedMessage(resolution, { guildId, channelId, content, stickerIds, gifUrl, replyToMessageId, mentionRepliedUser, allowMentions, nonce }, signal);
+}
+
+async function sendResolvedMessage({ account, channel }, { guildId, channelId, content, stickerIds = [], gifUrl, replyToMessageId, mentionRepliedUser = false, allowMentions = false, nonce }, signal) {
+  const messageContent = validateMessage({ content, stickerIds, gifUrl, replyToMessageId, mentionRepliedUser, nonce });
   signal?.throwIfAborted();
   const messageNonce = nonce ?? randomBytes(12).toString('hex');
   let message;
@@ -93,23 +99,27 @@ export async function sendMessageBatch(service, { guildId, channelId, messages, 
 
   const identifier = batchId || randomBytes(10).toString('hex');
   const sentMessages = [];
-  for (const [index, message] of messages.entries()) {
-    try {
+  let failedMessageIndex = 0;
+  try {
+    signal?.throwIfAborted();
+    const resolution = await service.resolveChannel(channelId, guildId);
+    for (const [index, message] of messages.entries()) {
+      failedMessageIndex = index;
       signal?.throwIfAborted();
       if (index > 0 && intervalMs > 0) await sleep(intervalMs, undefined, signal ? { signal } : undefined);
-      const sent = await sendMessage(service, {
+      const sent = await sendResolvedMessage(resolution, {
         ...message, guildId, channelId, allowMentions,
         replyToMessageId: index === 0 ? replyToMessageId : undefined,
         mentionRepliedUser: index === 0 ? mentionRepliedUser : false,
         nonce: `${identifier}:${index}`,
-      }, { signal });
+      }, signal);
       sentMessages.push(sent);
-    } catch (error) {
-      error.batchId = identifier;
-      error.sentMessages = sentMessages;
-      error.failedMessageIndex = index;
-      throw error;
     }
+  } catch (error) {
+    error.batchId = identifier;
+    error.sentMessages = sentMessages;
+    error.failedMessageIndex = failedMessageIndex;
+    throw error;
   }
 
   return { batchId: identifier, sentMessages };

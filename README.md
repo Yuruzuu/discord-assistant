@@ -182,6 +182,8 @@ objects and spaces them by `intervalMs` (650 ms by default). Its optional
 `replyToMessageId` applies to the first bubble. A stable `batchId` gives each
 message a stable nonce; partial failures include `sentMessages` and
 `failedMessageIndex` so a retry can avoid duplicate sends.
+The channel and bot route are resolved once per batch; each send still goes
+through Discord's permission checks, rate limits and nonce deduplication.
 
 ## Proactive channel conversations
 
@@ -229,6 +231,9 @@ active listener's configuration. `accountId` selects a specific configured bot.
 `DISCORD_CODEX_COMMAND` can point to a Codex executable when it is absent from
 `PATH`. Private control/status files and logs live under
 `~/.local/share/discord-mcp/proactive` (or `XDG_DATA_HOME`).
+Bursty statistics updates share a status-file write within a 250 ms window.
+Lifecycle changes flush immediately, and live status requests use the current
+in-memory state.
 
 ## Periodic callers
 

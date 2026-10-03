@@ -10,6 +10,7 @@ import { createCodexResponder } from './codex-responder.mjs';
 import { createProactiveEngine } from './engine.mjs';
 import { createGateway } from './gateway.mjs';
 import { listenerPaths, writeState } from './state.mjs';
+import { createStateWriter } from './state-writer.mjs';
 
 async function main() {
   const filename = process.argv[2];
@@ -27,16 +28,16 @@ async function main() {
     mode: configuration.mode, model: configuration.model || null, startedAt: new Date().toISOString(),
     lastError: null, statistics: {},
   };
-  let stateWrite = Promise.resolve();
+  const stateWriter = createStateWriter((snapshot) => writeState(paths.status, snapshot), { onError: (error) => process.stderr.write(`[discord-proactive] status write failed: ${error.message}\n`) });
   let engine;
   let gateway;
   let shuttingDown = false;
 
   function updateState(patch) {
     state = { ...state, ...patch };
-    const snapshot = state;
-    stateWrite = stateWrite.catch(() => {}).then(() => writeState(paths.status, snapshot));
-    return stateWrite;
+    if (patch.state !== undefined || patch.running !== undefined) return stateWriter.flush(state);
+    stateWriter.schedule(state);
+    return Promise.resolve();
   }
 
   function errorMessage(error) {

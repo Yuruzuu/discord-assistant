@@ -66,7 +66,7 @@ test('GIF-only sends and text plus GIF URLs are supported', async () => {
 });
 
 test('message batches keep order and reference the original message only once', async () => {
-  const { service, sends } = fixture();
+  const { service, sends, requests } = fixture();
   const waits = [];
   const result = await sendMessageBatch(service, { channelId, messages: [{ content: 'ohhh' }, { content: 'I see it now' }], replyToMessageId: messageId, batchId: 'stable-batch' }, { sleep: async (delay) => { waits.push(delay); } });
   assert.deepEqual(sends.map((payload) => payload.content), ['ohhh', 'I see it now']);
@@ -75,6 +75,7 @@ test('message batches keep order and reference the original message only once', 
   assert.deepEqual(sends.map((payload) => payload.nonce), ['stable-batch:0', 'stable-batch:1']);
   assert.deepEqual(waits, [650]);
   assert.equal(result.sentMessages.length, 2);
+  assert.equal(requests.filter((path) => path === `/channels/${channelId}`).length, 1);
 });
 
 test('invalid later batch content fails before any messages are sent', async () => {
@@ -92,6 +93,16 @@ test('partial batch failures report receipts and stop the remaining sends', asyn
     return true;
   });
   assert.equal(sends.length, 2);
+});
+
+test('batch routing failures retain the retry identifier and empty send receipts', async () => {
+  const service = { resolveChannel: async () => { throw new Error('No accessible channel'); } };
+  await assert.rejects(() => sendMessageBatch(service, { channelId, batchId: 'retry-batch', messages: [{ content: 'hello' }] }), (error) => {
+    assert.equal(error.batchId, 'retry-batch');
+    assert.deepEqual(error.sentMessages, []);
+    assert.equal(error.failedMessageIndex, 0);
+    return true;
+  });
 });
 
 test('stopping a batch prevents subsequent messages', async () => {
