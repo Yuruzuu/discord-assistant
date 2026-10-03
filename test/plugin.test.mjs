@@ -47,13 +47,18 @@ test('installed plugin runs from an isolated folder without repository dependenc
       stderr: 'pipe',
     }));
     const tools = (await client.listTools()).tools;
-    assert.equal(tools.length, 21);
+    assert.equal(tools.length, 24);
     assert.ok(tools.some((tool) => tool.name === 'discord_read'));
     assert.ok(tools.some((tool) => tool.name === 'discord_send_message' && tool.annotations.readOnlyHint === false));
     assert.ok(tools.some((tool) => tool.name === 'discord_list_expressions'));
     assert.ok(tools.some((tool) => tool.name === 'discord_start_proactive'));
     assert.ok(tools.some((tool) => tool.name === 'discord_search_messages'));
     assert.ok(tools.some((tool) => tool.name === 'discord_message_context'));
+    const directMessages = tools.find((tool) => tool.name === 'discord_start_direct_messages');
+    assert.ok(directMessages);
+    assert.equal(directMessages.annotations.readOnlyHint, false);
+    assert.ok(!('userId' in directMessages.inputSchema.properties));
+    assert.ok(!('ownerUserId' in directMessages.inputSchema.properties));
   } finally {
     await client.close();
     await rm(temporary, { recursive: true, force: true });

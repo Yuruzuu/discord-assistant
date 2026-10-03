@@ -1,15 +1,17 @@
-import { Client, Events, GatewayIntentBits, Options } from 'discord.js';
+import { Client, Events, GatewayIntentBits, Options, Partials } from 'discord.js';
+import { acceptsListenerMessage } from './target.mjs';
 
-export function createGateway({ token, guildId, channelId, onMessage, onError }) {
+export function createGateway({ token, guildId, channelId, directMessages = false, onMessage, onError, clientFactory = (options) => new Client(options) }) {
   let readyTimer;
-  const client = new Client({
-    intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent],
+  const client = clientFactory({
+    intents: directMessages ? [GatewayIntentBits.DirectMessages] : [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent],
+    partials: directMessages ? [Partials.Channel] : [],
     makeCache: Options.cacheWithLimits({ ...Options.DefaultMakeCacheSettings, MessageManager: 0, GuildMemberManager: 0, PresenceManager: 0 }),
     allowedMentions: { parse: [], repliedUser: false },
   });
   client.on(Events.Error, onError);
   client.on(Events.MessageCreate, (message) => {
-    if (message.guildId !== guildId || message.channelId !== channelId) return;
+    if (!acceptsListenerMessage({ guildId, channelId, directMessages }, { guild_id: message.guildId, channel_id: message.channelId, author: message.author })) return;
     const incoming = {
       id: message.id, guild_id: message.guildId, channel_id: message.channelId,
       author: { id: message.author.id, username: message.author.username, global_name: message.author.globalName, bot: message.author.bot },

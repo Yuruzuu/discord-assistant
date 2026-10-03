@@ -2,6 +2,7 @@ import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { directMessageOwnerId } from './target.mjs';
 
 export function proactiveRoot() {
   return join(process.env.XDG_DATA_HOME || join(homedir(), '.local', 'share'), 'discord-mcp', 'proactive');
@@ -9,11 +10,22 @@ export function proactiveRoot() {
 
 export function listenerPaths(accountId, channelId, root = proactiveRoot()) {
   if (!/^[A-Za-z0-9_-]+$/.test(accountId) || !/^\d{17,20}$/.test(channelId)) throw new Error('Invalid listener account or channel ID');
+
+  return pathsForTarget(accountId, channelId, root);
+}
+
+export function directMessagePaths(accountId, root = proactiveRoot()) {
+  if (!/^[A-Za-z0-9_-]+$/.test(accountId)) throw new Error('Invalid listener account ID');
+
+  return pathsForTarget(accountId, `dm-${directMessageOwnerId}`, root);
+}
+
+function pathsForTarget(accountId, target, root) {
   return {
     root,
-    configuration: join(root, `${accountId}-${channelId}.json`),
-    status: join(root, `${accountId}-${channelId}.status.json`),
-    log: join(root, `${accountId}-${channelId}.log`),
+    configuration: join(root, `${accountId}-${target}.json`),
+    status: join(root, `${accountId}-${target}.status.json`),
+    log: join(root, `${accountId}-${target}.log`),
   };
 }
 

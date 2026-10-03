@@ -1,8 +1,10 @@
+import { acceptsListenerMessage } from './target.mjs';
+
 export function isQuestion(content) {
   return /\?|^(?:\s|<@!?\d+>)*(?:what|why|how|where|when|who|can|could|would|should|is|are|does|do|help)\b/i.test(content || '');
 }
 
-export function createProactiveEngine({ botUserId, guildId, channelId, mode = 'mentions', batchWindowMs = 1500, cooldownMs = 5000, maxRepliesPerMinute = 6, resolveReplyAuthor, getContext, generateReply, sendReplies, now = Date.now, sleep = wait, onStatus = () => {} }) {
+export function createProactiveEngine({ botUserId, guildId, channelId, directMessages = false, mode = 'mentions', batchWindowMs = 1500, cooldownMs = 5000, maxRepliesPerMinute = 6, resolveReplyAuthor, getContext, generateReply, sendReplies, now = Date.now, sleep = wait, onStatus = () => {} }) {
   const pending = new Map();
   const queue = [];
   const seen = new Set();
@@ -74,7 +76,7 @@ export function createProactiveEngine({ botUserId, guildId, channelId, mode = 'm
   }
 
   async function receive(message) {
-    if (stopped || message.guild_id !== guildId || message.channel_id !== channelId) return false;
+    if (stopped || !acceptsListenerMessage({ guildId, channelId, directMessages }, message)) return false;
     statistics.received += 1;
     if (message.author?.bot || message.webhook_id || !message.author?.id || seen.has(message.id)) { statistics.skipped += 1; report(); return false; }
     seen.add(message.id);
@@ -84,13 +86,13 @@ export function createProactiveEngine({ botUserId, guildId, channelId, mode = 'm
     let existing = pending.get(authorId);
     const mentioned = (message.mentions || []).some((user) => user.id === botUserId) || new RegExp(`<@!?${botUserId}>`).test(message.content || '');
     let repliesToBot = message.referenced_message?.author?.id === botUserId || message.referenceAuthorId === botUserId;
-    if (!existing && !mentioned && !repliesToBot && message.message_reference?.message_id) {
+    if (!directMessages && !existing && !mentioned && !repliesToBot && message.message_reference?.message_id) {
       try { repliesToBot = await resolveReplyAuthor(message.message_reference.message_id) === botUserId; }
       catch { repliesToBot = false; }
     }
     if (stopped) return false;
     existing = pending.get(authorId);
-    if (!existing && !mentioned && !repliesToBot && mode !== 'all' && !(mode === 'questions' && isQuestion(message.content))) {
+    if (!directMessages && !existing && !mentioned && !repliesToBot && mode !== 'all' && !(mode === 'questions' && isQuestion(message.content))) {
       statistics.skipped += 1; report(); return false;
     }
     if (!existing && queue.length + pending.size >= 20) { statistics.skipped += 1; report(); return false; }

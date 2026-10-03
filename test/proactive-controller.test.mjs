@@ -6,6 +6,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout } from 'node:timers/promises';
 import { createProactiveController } from '../src/proactive/controller.mjs';
+import { directMessageOwnerId } from '../src/proactive/target.mjs';
+import { directMessagePaths } from '../src/proactive/state.mjs';
 
 const guildId = '100000000000000001';
 const channelId = '200000000000000001';
@@ -14,13 +16,14 @@ test('listener starts only on request, survives its caller, and stops through au
   const root = await mkdtemp(join(tmpdir(), 'discord-controller-'));
   const entrypoint = join(root, 'fixture-daemon.mjs');
   let launched = 0;
-  let child;
+  const children = [];
+  let recipient;
   await writeFile(entrypoint, `
 import { readFile, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 const file = process.argv[2];
 const settings = JSON.parse(await readFile(file, 'utf8'));
-const state = { listenerId: settings.listenerId, running: true, state: 'running', channelId: settings.channelId, mode: settings.mode };
+const state = { listenerId: settings.listenerId, running: true, state: 'running', channelId: settings.channelId, mode: settings.mode, directMessages: settings.directMessages, ownerUserId: settings.ownerUserId };
 const server = createServer((request, response) => {
   if (request.headers.authorization !== 'Bearer ' + settings.controlToken) { response.writeHead(401).end(); return; }
   response.setHeader('content-type', 'application/json');
@@ -38,13 +41,16 @@ server.listen(0, '127.0.0.1', async () => {
 });
 `);
   const service = {
-    accounts: [{ id: 'reader', client: { getChannel: async () => ({ id: channelId, guild_id: guildId, type: 0 }) } }],
+    accounts: [{ id: 'reader', client: {
+      getChannel: async () => ({ id: channelId, guild_id: guildId, type: 0 }),
+      createDirectMessageChannel: async (userId) => { recipient = userId; return { id: '200000000000000002', type: 1, recipients: [{ id: userId }] }; },
+    } }],
     accountById: () => service.accounts[0],
   };
   const controller = createProactiveController(service, {
     root, entrypoint,
     commandCheck: () => ({ status: 0 }),
-    spawnImpl: (...args) => { launched += 1; child = spawn(...args); return child; },
+    spawnImpl: (...args) => { launched += 1; const child = spawn(...args); children.push(child); return child; },
   });
   try {
     const idle = await controller.status({ channelId });
@@ -62,14 +68,41 @@ server.listen(0, '127.0.0.1', async () => {
     assert.equal(rejected.status, 401);
     assert.equal((await controller.start({ guildId, channelId, model: 'fixture-model' })).alreadyRunning, true);
     assert.equal(launched, 1);
+    const directMessages = await controller.start({ directMessages: true, ownerUserId: '500000000000000001', model: 'fixture-model' });
+    assert.equal(directMessages.ownerUserId, directMessageOwnerId);
+    assert.equal(recipient, directMessageOwnerId);
+    assert.equal(directMessages.mode, 'all');
+    assert.equal(directMessages.channelId, '200000000000000002');
+    assert.equal((await controller.status({ directMessages: true })).running, true);
+    assert.equal((await controller.status({ channelId })).running, true);
+    assert.equal((await controller.start({ directMessages: true })).alreadyRunning, true);
+    assert.equal(launched, 2);
+    const directMessageSettings = JSON.parse(await readFile(directMessagePaths('reader', root).configuration, 'utf8'));
+    assert.equal(directMessageSettings.ownerUserId, directMessageOwnerId);
+    assert.equal(directMessageSettings.guildId, undefined);
+    assert.equal((await controller.stop({ directMessages: true })).running, false);
+    assert.equal((await controller.status({ channelId })).running, true);
     const stopped = await controller.stop({ channelId });
     assert.equal(stopped.running, false);
     await setTimeout(100);
     assert.equal((await controller.status({ channelId })).running, false);
   } finally {
-    child?.kill('SIGTERM');
+    for (const child of children) child.kill('SIGTERM');
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test('DM startup rejects a channel for another user before launching a responder', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'discord-controller-owner-'));
+  let launched = 0;
+  const service = { accounts: [{ id: 'reader', client: { createDirectMessageChannel: async () => ({ id: channelId, type: 1, recipients: [{ id: '500000000000000001' }] }) } }] };
+  service.accountById = () => service.accounts[0];
+  const controller = createProactiveController(service, { root, entrypoint: '/fixture/daemon.mjs', spawnImpl: () => { launched += 1; } });
+  try {
+    await assert.rejects(() => controller.start({ directMessages: true }), /configured owner/);
+    assert.equal(launched, 0);
+    assert.equal((await controller.status({ directMessages: true })).state, 'not-started');
+  } finally { await rm(root, { recursive: true, force: true }); }
 });
 
 test('concurrent start requests cannot launch duplicate channel listeners', async () => {

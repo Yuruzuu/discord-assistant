@@ -8,8 +8,9 @@ can send messages as a configured bot when explicitly requested.
 An on-demand proactive server can also listen to a selected channel and answer
 mentions or questions using the logged-in Codex CLI.
 
-Reading and discovery use Discord REST `GET` requests. Only
-the sending tools write to Discord. It does not edit, delete, react to, or
+Reading and discovery use Discord REST `GET` requests. Sending tools post
+messages, and DM startup opens or reuses the owner's private conversation.
+It does not edit, delete, react to, or
 moderate anything. Proactive mode keeps private process-control files and uses
 the Gateway while active; it does not auto-start or require a polling schedule.
 
@@ -19,7 +20,7 @@ the Gateway while active; it does not auto-start or require a polling schedule.
 - A Discord application with a bot. One bot can be invited to multiple servers.
 - Enable **Message Content Intent** under Developer Portal > Bot > Privileged
   Gateway Intents. Discord applies this intent to message content, embeds, and
-  attachments returned to verified apps even though this MCP uses REST only.
+  attachments returned to verified apps, including REST message reads.
 - Grant the bot **View Channel** and **Read Message History** only where it should
   read. Add it to private threads that it needs to inspect.
 - For sending, grant **Send Messages** in the target channel, or **Send Messages
@@ -102,6 +103,9 @@ that file; `tokenEnv` is an environment variable name, not a token.
 | `discord_search_messages` | Search indexed server messages and return up to 250 matches with links and continuation arguments. |
 | `discord_message_context` | Jump to a message and read its surrounding conversation. |
 | `discord_browse_messages` | Browse up to 250 messages at a time with older/newer cursors. |
+| `discord_start_direct_messages` | Start private DM conversations for the fixed owner only. |
+| `discord_stop_direct_messages` | Stop DM replies independently of server listeners. |
+| `discord_direct_message_status` | Inspect the DM listener, owner ID and reply statistics. |
 | `discord_fetch_attachment` | Fetch one selected image from a message or a direct Discord CDN/media URL. |
 | `discord_check_access` | Diagnose which configured bot can read a guild, channel, or message. |
 | `discord_list_expressions` | List custom emojis and stickers, with ready-to-use emoji markup, sticker IDs, availability, and role restrictions. |
@@ -234,6 +238,29 @@ active listener's configuration. `accountId` selects a specific configured bot.
 Bursty statistics updates share a status-file write within a 250 ms window.
 Lifecycle changes flush immediately, and live status requests use the current
 in-memory state.
+
+## Private owner DMs
+
+Call `discord_start_direct_messages` to enable private conversations with the
+bot. This installation is fixed to owner ID `291140236979732480`; no tool or
+environment option can change that recipient. The listener opens or reuses the
+bot's one-to-one DM with that owner, and checks the sender and channel before
+context lookup or reply generation. Other senders, group DMs and server messages
+are ignored by this listener.
+
+Open the bot's profile in Discord and select **Message**. Owner messages trigger
+replies without a mention or question mark. Replies use the logged-in Codex CLI,
+native message replies, batching and the same cooldown/attempt limits as server
+conversations. DMs use standard emojis and supplied or recent GIFs, without
+fetching server expression catalogs. The DM Gateway uses the `DIRECT_MESSAGES`
+intent and supports uncached DM channels; Message Content Intent is not needed
+for messages sent directly to the bot. See [Discord's Gateway documentation](https://docs.discord.com/developers/events/gateway).
+
+`discord_direct_message_status` reports the fixed owner, running state and reply
+statistics. `discord_stop_direct_messages` stops DM replies independently of
+server listeners. DM mode stays active while its background process and computer
+are running, and does not auto-start after a restart. It only sees the owner's
+conversation with the bot, not personal conversations with other Discord users.
 
 ## Periodic callers
 

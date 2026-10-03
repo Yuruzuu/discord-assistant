@@ -247,6 +247,10 @@ export class DiscordApiClient {
     return this.get(`/users/${userId}`);
   }
 
+  createDirectMessageChannel(userId) {
+    return this.post('/users/@me/channels', { recipient_id: userId });
+  }
+
   getGuildMember(guildId, userId) {
     return this.get(`/guilds/${guildId}/members/${userId}`);
   }

@@ -1,7 +1,7 @@
 {
   "name": "discord",
-  "version": "2.2.0",
-  "description": "Search Discord servers and browse message context, read profiles, send native replies and playful batches, and start proactive channel conversations.",
+  "version": "2.3.0",
+  "description": "Search Discord messages, read profiles, send playful replies, and start proactive server or owner-only DM conversations.",
   "author": {
     "name": "Yuruzuu"
   },
@@ -12,7 +12,7 @@
   "interface": {
     "displayName": "Discord",
     "shortDescription": "Read server messages and send bot replies.",
-    "longDescription": "Connect your Discord bot to read channels, tickets, profiles and images; send native replies with custom emojis, stickers and GIFs; and start an on-demand channel listener powered by Codex.",
+    "longDescription": "Connect your Discord bot to read channels, tickets, profiles and images; send native replies with server expressions; and start on-demand channel or owner-only DM conversations powered by Codex.",
     "developerName": "Yuruzuu",
     "category": "Productivity",
     "capabilities": [
