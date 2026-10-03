@@ -1,12 +1,12 @@
 import { spawn, spawnSync } from 'node:child_process';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { closeSync, openSync } from 'node:fs';
-import { open, rm, writeFile } from 'node:fs/promises';
+import { open, readdir, rm, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as wait } from 'node:timers/promises';
 import { assertSnowflake } from '../discord-url.mjs';
-import { ensureStateRoot, listenerPaths, directMessagePaths, readState, writeState, proactiveRoot } from './state.mjs';
+import { ensureStateRoot, listenerTargetPaths, readState, writeState, proactiveRoot } from './state.mjs';
 import { assertOwnerDirectMessageChannel, directMessageOwnerId } from './target.mjs';
 import { replyDefaults } from './reply-defaults.mjs';
 
@@ -25,20 +25,20 @@ async function controlRequest(configuration, method = 'GET', route = '/status') 
 
 export function createProactiveController(service, { entrypoint = process.env.DISCORD_PROACTIVE_ENTRYPOINT || service.proactiveEntrypoint, root = proactiveRoot(), spawnImpl = spawn, commandCheck = spawnSync } = {}) {
   function accountForId(accountId) { return accountId ? service.accountById(accountId) : service.accounts[0]; }
-  function targetPaths(accountId, channelId, directMessages) {
-    return directMessages ? directMessagePaths(accountId, root) : listenerPaths(accountId, channelId, root);
+  function targetPaths(accountId, channelId, directMessages, allServers) {
+    return listenerTargetPaths({ accountId, channelId, directMessages, allServers }, root);
   }
   function processExists(pid) {
     if (!Number.isSafeInteger(pid) || pid < 1) return false;
     try { process.kill(pid, 0); return true; } catch (error) { return error.code !== 'ESRCH'; }
   }
 
-  async function status({ channelId, accountId, directMessages = false } = {}) {
-    if (!directMessages) assertSnowflake(channelId, 'channelId');
+  async function status({ channelId, accountId, directMessages = false, allServers = false } = {}) {
+    if (!directMessages && !allServers) assertSnowflake(channelId, 'channelId');
     const account = accountForId(accountId);
-    const paths = targetPaths(account.id, channelId, directMessages);
+    const paths = targetPaths(account.id, channelId, directMessages, allServers);
     const configuration = await readState(paths.configuration);
-    if (!configuration) return { running: false, state: 'not-started', accountId: account.id, channelId, ...(directMessages ? { directMessages: true, ownerUserId: directMessageOwnerId } : {}) };
+    if (!configuration) return { running: false, state: 'not-started', accountId: account.id, channelId, ownerUserId: directMessageOwnerId, ...(directMessages ? { directMessages: true } : {}), ...(allServers ? { allServers: true } : {}) };
     const saved = await readState(paths.status);
     const pid = configuration.pid || saved?.pid;
     if (pid && !processExists(pid)) return { ...(saved || {}), running: false, state: saved?.state === 'failed' ? 'failed' : 'stopped' };
@@ -51,11 +51,11 @@ export function createProactiveController(service, { entrypoint = process.env.DI
   }
 
   async function start(options) {
-    if (!options.directMessages) assertSnowflake(options.channelId, 'channelId');
+    if (!options.directMessages && !options.allServers) assertSnowflake(options.channelId, 'channelId');
     const account = accountForId(options.accountId);
-    const paths = targetPaths(account.id, options.channelId, options.directMessages);
+    const paths = targetPaths(account.id, options.channelId, options.directMessages, options.allServers);
     await ensureStateRoot(root);
-    const lockPath = `${paths.configuration}.starting`;
+    const lockPath = options.directMessages ? `${paths.configuration}.starting` : join(root, `${account.id}-servers.starting`);
     let lock;
     try { lock = await open(lockPath, 'wx', 0o600); }
     catch (error) {
@@ -73,18 +73,21 @@ export function createProactiveController(service, { entrypoint = process.env.DI
     finally { await lock.close(); await rm(lockPath, { force: true }); }
   }
 
-  async function startUnlocked({ guildId, channelId, accountId, directMessages = false, mode = 'mentions', model = replyDefaults.model, reasoningEffort = replyDefaults.reasoningEffort, serviceTier = replyDefaults.serviceTier, batchWindowMs = 1500, cooldownMs = 5000, maxRepliesPerMinute = 6, gifUrls = [] }) {
-    if (!directMessages) {
+  async function startUnlocked({ guildId, channelId, accountId, directMessages = false, allServers = false, mode = 'mentions', model = replyDefaults.model, reasoningEffort = replyDefaults.reasoningEffort, serviceTier = replyDefaults.serviceTier, batchWindowMs = 1500, cooldownMs = 5000, maxRepliesPerMinute = 6, gifUrls = [] }) {
+    if (!directMessages && !allServers) {
       assertSnowflake(guildId, 'guildId');
       assertSnowflake(channelId, 'channelId');
     }
     const account = accountForId(accountId);
-    const current = await status({ channelId, accountId: account.id, directMessages });
+    const current = await status({ channelId, accountId: account.id, directMessages, allServers });
     if (current.state === 'unreachable') throw new Error('The existing listener cannot be verified. Check its status before starting another instance.');
     if (current.running) return { ...current, alreadyRunning: true };
     if (!entrypoint) throw new Error('The proactive server entry point is not configured; update the Discord plugin');
-    const channel = directMessages ? await account.client.createDirectMessageChannel(directMessageOwnerId) : await account.client.getChannel(channelId);
-    if (directMessages) {
+    if (!directMessages) await assertNoOverlappingListener(account.id, allServers);
+    const channel = allServers ? null : directMessages ? await account.client.createDirectMessageChannel(directMessageOwnerId) : await account.client.getChannel(channelId);
+    if (allServers) {
+      guildId = undefined; channelId = undefined; mode = 'mentions';
+    } else if (directMessages) {
       assertOwnerDirectMessageChannel(channel);
       channelId = channel.id;
       guildId = undefined;
@@ -106,12 +109,13 @@ export function createProactiveController(service, { entrypoint = process.env.DI
     const authentication = commandCheck(codexCommand, ['login', 'status'], { encoding: 'utf8', timeout: 5000 });
     if (authentication.error || authentication.status !== 0) throw new Error('Codex CLI is not logged in. Run codex login before starting proactive mode.');
 
-    const paths = targetPaths(account.id, channelId, directMessages);
+    const paths = targetPaths(account.id, channelId, directMessages, allServers);
     await ensureStateRoot(root);
     const configuration = {
       listenerId: randomUUID(), controlToken: randomBytes(32).toString('hex'),
-      accountId: account.id, guildId, channelId, mode,
-      ...(directMessages ? { directMessages: true, ownerUserId: directMessageOwnerId } : {}),
+      accountId: account.id, guildId, channelId, mode, ownerUserId: directMessageOwnerId,
+      ...(allServers ? { allServers: true } : {}),
+      ...(directMessages ? { directMessages: true } : {}),
       model: model || replyDefaults.model, reasoningEffort, serviceTier, codexCommand,
       batchWindowMs, cooldownMs, maxRepliesPerMinute, gifUrls,
     };
@@ -122,7 +126,7 @@ export function createProactiveController(service, { entrypoint = process.env.DI
       await rm(paths.configuration);
       await writeFile(paths.configuration, JSON.stringify(configuration), { flag: 'wx', mode: 0o600 });
     }
-    await writeState(paths.status, { ...current, listenerId: configuration.listenerId, state: 'starting', running: false, accountId: account.id, guildId, channelId, model: configuration.model, reasoningEffort, serviceTier, ...(directMessages ? { directMessages: true, ownerUserId: directMessageOwnerId } : {}) });
+    await writeState(paths.status, { ...current, listenerId: configuration.listenerId, state: 'starting', running: false, accountId: account.id, guildId, channelId, model: configuration.model, reasoningEffort, serviceTier, ownerUserId: directMessageOwnerId, ...(directMessages ? { directMessages: true } : {}), ...(allServers ? { allServers: true } : {}) });
     const log = openSync(paths.log, 'a', 0o600);
     let child;
     try {
@@ -150,19 +154,34 @@ export function createProactiveController(service, { entrypoint = process.env.DI
     throw new Error('Proactive server is still starting. Check discord_proactive_status before retrying.');
   }
 
-  async function stop({ channelId, accountId, directMessages = false }) {
-    if (!directMessages) assertSnowflake(channelId, 'channelId');
+  async function assertNoOverlappingListener(accountId, allServers) {
+    if (!allServers) {
+      const broad = await status({ accountId, allServers: true });
+      if (broad.running || ['starting', 'unreachable'].includes(broad.state)) throw new Error('All-server mentions are active; stop them before starting a channel listener');
+      return;
+    }
+    for (const filename of await readdir(root)) {
+      if (!filename.endsWith('.json') || filename.endsWith('.status.json')) continue;
+      const configuration = await readState(join(root, filename));
+      if (!configuration || configuration.accountId !== accountId || configuration.directMessages || configuration.allServers) continue;
+      const channel = await status({ accountId, channelId: configuration.channelId });
+      if (channel.running || ['starting', 'unreachable'].includes(channel.state)) throw new Error('Stop active channel listeners before enabling all-server mentions');
+    }
+  }
+
+  async function stop({ channelId, accountId, directMessages = false, allServers = false }) {
+    if (!directMessages && !allServers) assertSnowflake(channelId, 'channelId');
     const account = accountForId(accountId);
-    const paths = targetPaths(account.id, channelId, directMessages);
+    const paths = targetPaths(account.id, channelId, directMessages, allServers);
     const configuration = await readState(paths.configuration);
     if (!configuration?.controlUrl) {
-      const current = await status({ channelId, accountId: account.id, directMessages });
+      const current = await status({ channelId, accountId: account.id, directMessages, allServers });
       if (current.state === 'starting') throw new Error('The listener is still starting; retry stop shortly');
       return { ...current, alreadyStopped: true };
     }
     try { return await controlRequest(configuration, 'POST', '/stop'); }
     catch (error) {
-      const current = await status({ channelId, accountId: account.id, directMessages });
+      const current = await status({ channelId, accountId: account.id, directMessages, allServers });
       if (current.running || current.state === 'unreachable') throw new Error(`Listener stop could not be confirmed: ${error.message}`);
       return { ...current, alreadyStopped: true };
     }

@@ -22,7 +22,7 @@ test('serves the v2 and compatibility tools over MCP stdio', async () => {
     assert.ok(names.includes('discord_get_message'));
     assert.ok(names.includes('discord_list_expressions'));
     assert.ok(names.includes('discord_send_message'));
-    assert.deepEqual(result.tools.filter((tool) => tool.annotations?.readOnlyHint === false).map((tool) => tool.name), ['discord_send_message', 'discord_reply', 'discord_send_messages', 'discord_start_proactive', 'discord_stop_proactive', 'discord_start_direct_messages', 'discord_stop_direct_messages']);
+    assert.deepEqual(result.tools.filter((tool) => tool.annotations?.readOnlyHint === false).map((tool) => tool.name), ['discord_send_message', 'discord_reply', 'discord_send_messages', 'discord_start_proactive', 'discord_stop_proactive', 'discord_start_direct_messages', 'discord_stop_direct_messages', 'discord_start_server_mentions', 'discord_stop_server_mentions']);
   } finally {
     await client.close();
   }

@@ -12,7 +12,7 @@ const botUserId = '300000000000000001';
 let nextMessage = 400000000000000001n;
 
 function message(properties = {}) {
-  return { id: String(nextMessage++), guild_id: guildId, channel_id: channelId, author: { id: '500000000000000001', bot: false }, content: 'hello', mentions: [], ...properties };
+  return { id: String(nextMessage++), guild_id: guildId, channel_id: channelId, author: { id: directMessageOwnerId, bot: false }, content: 'hello', mentions: [], ...properties };
 }
 
 function fixture(options = {}) {
@@ -134,7 +134,7 @@ test('generation failures release the queue and obey cooldown before another att
   try {
     await engine.receive(message({ mentions: [{ id: botUserId }] }));
     await until(() => engine.status().errors === 1);
-    await engine.receive(message({ mentions: [{ id: botUserId }], author: { id: '500000000000000002' } }));
+    await engine.receive(message({ mentions: [{ id: botUserId }] }));
     await until(() => sends.length === 1);
     assert.deepEqual(waits, [100]);
   } finally { engine.stop(); }

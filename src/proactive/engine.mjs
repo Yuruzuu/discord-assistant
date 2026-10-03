@@ -1,10 +1,10 @@
-import { acceptsListenerMessage } from './target.mjs';
+import { acceptsListenerMessage, mentionsBot } from './target.mjs';
 
 export function isQuestion(content) {
   return /\?|^(?:\s|<@!?\d+>)*(?:what|why|how|where|when|who|can|could|would|should|is|are|does|do|help)\b/i.test(content || '');
 }
 
-export function createProactiveEngine({ botUserId, guildId, channelId, directMessages = false, mode = 'mentions', batchWindowMs = 1500, cooldownMs = 5000, maxRepliesPerMinute = 6, resolveReplyAuthor, getContext, generateReply, sendReplies, parseCommand = () => null, handleCommands, startTyping = () => () => {}, now = Date.now, sleep = wait, onStatus = () => {} }) {
+export function createProactiveEngine({ botUserId, guildId, channelId, directMessages = false, mode = 'mentions', batchWindowMs = 1500, cooldownMs = 5000, maxRepliesPerMinute = 6, resolveReplyAuthor, getContext, generateReply, sendReplies, parseCommand = () => null, handleCommands, scheduleReply = (operation) => operation(), startTyping = () => () => {}, now = Date.now, sleep = wait, onStatus = () => {} }) {
   const pending = new Map();
   const queue = [];
   const seen = new Set();
@@ -20,6 +20,50 @@ export function createProactiveEngine({ botUserId, guildId, channelId, directMes
   }
 
   function report() { onStatus(status()); }
+
+  async function processBatch(batch) {
+    cancellation.signal.throwIfAborted();
+    const commandBatch = batch.kind === 'command';
+    const stopTyping = startTyping(cancellation.signal);
+    let streamed = 0;
+    try {
+      let response;
+      if (commandBatch) response = await handleCommands(batch.messages, cancellation.signal);
+      else {
+        const context = await getContext(batch.messages, cancellation.signal);
+        cancellation.signal.throwIfAborted();
+        response = await generateReply({ ...context, triggerMessages: batch.messages, mode }, cancellation.signal, { onMessage: async (message, index, deliverySignal) => {
+          if (index !== streamed || streamed >= 5) throw new Error('Reply bubbles arrived out of order');
+          cancellation.signal.throwIfAborted();
+          const receipt = await sendReplies([message], batch.messages.at(-1), deliverySignal || cancellation.signal, { offset: streamed });
+          if (streamed === 0) statistics.lastFirstResponseMs = now() - batch.firstReceivedAt;
+          streamed += 1;
+          statistics.sentMessages += receipt.sentMessages.length;
+          statistics.streamedMessages += receipt.sentMessages.length;
+          lastReplyAt = now();
+          report();
+        } });
+      }
+      if (!response.shouldReply || stopped) { statistics.skipped += batch.messages.length; return; }
+      cancellation.signal.throwIfAborted();
+      const remaining = response.messages.slice(streamed);
+      const sent = remaining.length ? await sendReplies(remaining, batch.messages.at(-1), cancellation.signal, { offset: streamed }) : { sentMessages: [] };
+      if (!streamed && sent.sentMessages.length) statistics.lastFirstResponseMs = now() - batch.firstReceivedAt;
+      statistics.replyBatches += 1;
+      statistics.sentMessages += sent.sentMessages.length;
+      lastReplyAt = now();
+      statistics.lastError = null;
+    } catch (error) {
+      if (stopped) return;
+      statistics.errors += 1;
+      statistics.lastError = String(error.message).slice(0, 500);
+      if (error.sentMessages?.length) {
+        statistics.sentMessages += error.sentMessages.length;
+        lastReplyAt = now();
+      }
+    } finally { stopTyping(); }
+    report();
+  }
 
   async function drain() {
     if (busy || stopped) return;
@@ -38,45 +82,8 @@ export function createProactiveEngine({ botUserId, guildId, channelId, directMes
         }
         const batch = queue.shift();
         if (!commandBatch) { replyTimes.push(now()); lastReplyAt = now(); }
-        const stopTyping = startTyping(cancellation.signal);
-        let streamed = 0;
-        try {
-          let response;
-          if (commandBatch) response = await handleCommands(batch.messages, cancellation.signal);
-          else {
-            const context = await getContext(batch.messages, cancellation.signal);
-            cancellation.signal.throwIfAborted();
-            response = await generateReply({ ...context, triggerMessages: batch.messages, mode }, cancellation.signal, { onMessage: async (message, index, deliverySignal) => {
-              if (index !== streamed || streamed >= 5) throw new Error('Reply bubbles arrived out of order');
-              cancellation.signal.throwIfAborted();
-              const receipt = await sendReplies([message], batch.messages.at(-1), deliverySignal || cancellation.signal, { offset: streamed });
-              if (streamed === 0) statistics.lastFirstResponseMs = now() - batch.firstReceivedAt;
-              streamed += 1;
-              statistics.sentMessages += receipt.sentMessages.length;
-              statistics.streamedMessages += receipt.sentMessages.length;
-              lastReplyAt = now();
-              report();
-            } });
-          }
-          if (!response.shouldReply || stopped) { statistics.skipped += batch.messages.length; continue; }
-          cancellation.signal.throwIfAborted();
-          const remaining = response.messages.slice(streamed);
-          const sent = remaining.length ? await sendReplies(remaining, batch.messages.at(-1), cancellation.signal, { offset: streamed }) : { sentMessages: [] };
-          if (!streamed && sent.sentMessages.length) statistics.lastFirstResponseMs = now() - batch.firstReceivedAt;
-          statistics.replyBatches += 1;
-          statistics.sentMessages += sent.sentMessages.length;
-          lastReplyAt = now();
-          statistics.lastError = null;
-        } catch (error) {
-          if (stopped) break;
-          statistics.errors += 1;
-          statistics.lastError = String(error.message).slice(0, 500);
-          if (error.sentMessages?.length) {
-            statistics.sentMessages += error.sentMessages.length;
-            lastReplyAt = now();
-          }
-        } finally { stopTyping(); }
-        report();
+        if (commandBatch) await processBatch(batch);
+        else await scheduleReply(() => processBatch(batch), cancellation.signal);
       }
     } catch (error) {
       if (!stopped) { statistics.errors += 1; statistics.lastError = String(error.message).slice(0, 500); }
@@ -102,7 +109,7 @@ export function createProactiveEngine({ botUserId, guildId, channelId, directMes
 
     const authorId = message.author.id;
     let existing = pending.get(authorId);
-    const mentioned = (message.mentions || []).some((user) => user.id === botUserId) || new RegExp(`<@!?${botUserId}>`).test(message.content || '');
+    const mentioned = mentionsBot(message, botUserId);
     let repliesToBot = message.referenced_message?.author?.id === botUserId || message.referenceAuthorId === botUserId;
     if (!directMessages && !existing && !mentioned && !repliesToBot && message.message_reference?.message_id) {
       try { repliesToBot = await resolveReplyAuthor(message.message_reference.message_id) === botUserId; }

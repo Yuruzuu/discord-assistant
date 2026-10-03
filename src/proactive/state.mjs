@@ -20,6 +20,17 @@ export function directMessagePaths(accountId, root = proactiveRoot()) {
   return pathsForTarget(accountId, `dm-${directMessageOwnerId}`, root);
 }
 
+export function serverMentionPaths(accountId, root = proactiveRoot()) {
+  if (!/^[A-Za-z0-9_-]+$/.test(accountId)) throw new Error('Invalid listener account ID');
+  return pathsForTarget(accountId, 'servers', root);
+}
+
+export function listenerTargetPaths({ accountId, channelId, directMessages, allServers }, root = proactiveRoot()) {
+  if (directMessages && allServers) throw new Error('DM and all-server listeners must be separate');
+  if (allServers) return serverMentionPaths(accountId, root);
+  return directMessages ? directMessagePaths(accountId, root) : listenerPaths(accountId, channelId, root);
+}
+
 function pathsForTarget(accountId, target, root) {
   return {
     root,

@@ -69,7 +69,7 @@ export function createConversationReply({ command = process.env.CODEX_CLI_PATH |
     directory = await mkdtemp(join(tmpdir(), 'nova-conversation-'));
     if (closed) { await reset(); throw new Error('The Codex conversation is stopped'); }
     server = createAppServer({ command, cwd: directory, env: responderEnvironment(), spawnImpl, onNotification: receive, onFailure: failTurn });
-    await server.request('initialize', { clientInfo: { name: 'nova-discord', title: 'Nova Discord', version: '2.5.1' }, capabilities: { experimentalApi: true } });
+    await server.request('initialize', { clientInfo: { name: 'nova-discord', title: 'Nova Discord', version: '2.6.0' }, capabilities: { experimentalApi: true } });
     server.notify('initialized');
     const current = await server.request('config/read', { includeLayers: false });
     const disabledServers = Object.fromEntries(Object.keys(current.config.mcp_servers || {}).map((name) => [name, { enabled: false }]));

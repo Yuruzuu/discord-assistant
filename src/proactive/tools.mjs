@@ -17,7 +17,7 @@ export function registerProactiveTools(server, service, controller = createProac
   };
   register(server, 'discord_start_proactive', {
     title: 'Start Proactive Discord Listener',
-    description: 'Start an on-demand background Gateway listener for one channel. It uses logged-in Codex CLI to generate native replies and short message batches. Uses Codex quota while active. Only start when explicitly asked. Default mode responds to bot mentions and replies to the bot. Stop before changing an already active listener configuration.',
+    description: 'Start an owner-only background listener for one channel. Only user 291140236979732480 can trigger replies. Uses logged-in Codex CLI and quota. Default mode answers owner mentions and native replies to the bot. Only start when asked; stop before changing an active configuration.',
     annotations: writeAnnotations,
     inputSchema: {
       ...target, guildId: snowflake,
@@ -54,4 +54,21 @@ export function registerProactiveTools(server, service, controller = createProac
     description: 'Check the private DM listener, its fixed owner ID, queue, reply counts and latest error.',
     inputSchema: directMessageTarget,
   }, async (args) => success(await controller.status({ ...args, directMessages: true })));
+  register(server, 'discord_start_server_mentions', {
+    title: 'Watch Owner Mentions Across All Servers',
+    description: `Opt in to watching every accessible channel and thread in every server the bot joins. Responds only when owner ${directMessageOwnerId} mentions the bot or replies to its message. Creates separate conversations lazily and shares Codex reply limits. Stop channel-specific listeners before enabling this mode.`,
+    annotations: writeAnnotations,
+    inputSchema: { ...directMessageTarget, ...replyOptions },
+  }, async (args) => success(await controller.start({ ...args, allServers: true })));
+  register(server, 'discord_stop_server_mentions', {
+    title: 'Stop All-Server Owner Mentions',
+    description: 'Stop server-wide mention watching and cancel pending channel replies. Owner DMs continue independently.',
+    annotations: { ...writeAnnotations, idempotentHint: true },
+    inputSchema: directMessageTarget,
+  }, async (args) => success(await controller.stop({ ...args, allServers: true })));
+  register(server, 'discord_server_mentions_status', {
+    title: 'Get All-Server Owner Mention Status',
+    description: 'Inspect server-wide watching, fixed owner ID, accessible-server count and per-channel reply/cache statistics.',
+    inputSchema: directMessageTarget,
+  }, async (args) => success(await controller.status({ ...args, allServers: true })));
 }

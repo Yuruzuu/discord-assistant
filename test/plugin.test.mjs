@@ -47,7 +47,7 @@ test('installed plugin runs from an isolated folder without repository dependenc
       stderr: 'pipe',
     }));
     const tools = (await client.listTools()).tools;
-    assert.equal(tools.length, 24);
+    assert.equal(tools.length, 27);
     assert.ok(tools.some((tool) => tool.name === 'discord_read'));
     assert.ok(tools.some((tool) => tool.name === 'discord_send_message' && tool.annotations.readOnlyHint === false));
     assert.ok(tools.some((tool) => tool.name === 'discord_list_expressions'));
@@ -62,6 +62,10 @@ test('installed plugin runs from an isolated folder without repository dependenc
     assert.equal(directMessages.inputSchema.properties.model.default, 'gpt-6.1-sol');
     assert.equal(directMessages.inputSchema.properties.reasoningEffort.default, 'low');
     assert.equal(directMessages.inputSchema.properties.serviceTier.default, 'priority');
+    const allServers = tools.find((tool) => tool.name === 'discord_start_server_mentions');
+    assert.equal(allServers.annotations.readOnlyHint, false);
+    assert.ok(!('channelId' in allServers.inputSchema.properties));
+    assert.ok(!('ownerUserId' in allServers.inputSchema.properties));
   } finally {
     await client.close();
     await rm(temporary, { recursive: true, force: true });

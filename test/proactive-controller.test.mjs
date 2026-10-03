@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { setTimeout } from 'node:timers/promises';
 import { createProactiveController } from '../src/proactive/controller.mjs';
 import { directMessageOwnerId } from '../src/proactive/target.mjs';
-import { directMessagePaths } from '../src/proactive/state.mjs';
+import { directMessagePaths, serverMentionPaths } from '../src/proactive/state.mjs';
 
 const guildId = '100000000000000001';
 const channelId = '200000000000000001';
@@ -23,7 +23,7 @@ import { readFile, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 const file = process.argv[2];
 const settings = JSON.parse(await readFile(file, 'utf8'));
-const state = { listenerId: settings.listenerId, running: true, state: 'running', channelId: settings.channelId, mode: settings.mode, directMessages: settings.directMessages, ownerUserId: settings.ownerUserId };
+const state = { listenerId: settings.listenerId, running: true, state: 'running', channelId: settings.channelId, mode: settings.mode, directMessages: settings.directMessages, allServers: settings.allServers, ownerUserId: settings.ownerUserId };
 const server = createServer((request, response) => {
   if (request.headers.authorization !== 'Bearer ' + settings.controlToken) { response.writeHead(401).end(); return; }
   response.setHeader('content-type', 'application/json');
@@ -60,6 +60,7 @@ server.listen(0, '127.0.0.1', async () => {
     assert.equal(started.running, true);
     assert.equal(started.mode, 'mentions');
     assert.equal(launched, 1);
+    await assert.rejects(() => controller.start({ allServers: true }), /Stop active channel listeners/);
     assert.equal((await controller.status({ channelId })).running, true);
 
     const settings = JSON.parse(await readFile(join(root, `reader-${channelId}.json`), 'utf8'));
@@ -90,6 +91,15 @@ server.listen(0, '127.0.0.1', async () => {
     assert.equal(stopped.running, false);
     await setTimeout(100);
     assert.equal((await controller.status({ channelId })).running, false);
+    const broad = await controller.start({ allServers: true, mode: 'all' });
+    assert.equal(broad.allServers, true);
+    assert.equal(broad.mode, 'mentions');
+    assert.equal(broad.ownerUserId, directMessageOwnerId);
+    const broadSettings = JSON.parse(await readFile(serverMentionPaths('reader', root).configuration, 'utf8'));
+    assert.equal(broadSettings.channelId, undefined);
+    assert.equal(broadSettings.guildId, undefined);
+    await assert.rejects(() => controller.start({ guildId, channelId }), /All-server mentions are active/);
+    assert.equal((await controller.stop({ allServers: true })).running, false);
   } finally {
     for (const child of children) child.kill('SIGTERM');
     await rm(root, { recursive: true, force: true });
