@@ -1,0 +1,59 @@
+import { EventEmitter } from 'node:events';
+import { PassThrough, Writable } from 'node:stream';
+
+export function fakeCodexServer({ plans, hang = false, tools = {}, delayMs = 5 } = {}) {
+  const requests = [];
+  const launches = [];
+  let startedThreads = 0;
+  let completedTurns = 0;
+  const defaultMessage = { content: 'hey!', gifUrl: null, stickerIds: [] };
+  const spawnImpl = (command, args, options) => {
+    launches.push({ command, args, options });
+    const child = new EventEmitter();
+    child.stdout = new PassThrough(); child.stderr = new PassThrough();
+    child.exitCode = null;
+    let stopped = false;
+    let turns = 0;
+    const timers = new Set();
+    function emit(value) { if (!stopped) child.stdout.write(JSON.stringify(value) + '\n'); }
+    function later(callback) { const timer = setTimeout(() => { timers.delete(timer); if (!stopped) callback(); }, delayMs); timers.add(timer); }
+    child.stdin = new Writable({ write(chunk, encoding, callback) {
+      for (const line of chunk.toString().trim().split('\n')) {
+        const message = JSON.parse(line);
+        if (!message.method) continue;
+        requests.push(message);
+        const reply = (result) => emit({ id: message.id, result });
+        if (message.method === 'initialize') reply({});
+        else if (message.method === 'config/read') reply({ config: { mcp_servers: { discord: { enabled: true, env: { DISCORD_TOKEN: 'hidden-fixture-token' } } } } });
+        else if (message.method === 'thread/start') reply({ thread: { id: `thread-${++startedThreads}`, ephemeral: true } });
+        else if (message.method === 'mcpServerStatus/list') reply({ data: [{ name: 'discord', tools }] });
+        else if (message.method === 'turn/interrupt') reply({});
+        else if (message.method === 'turn/start') {
+          const turnId = `turn-${++turns}`;
+          const threadId = message.params.threadId;
+          reply({ turn: { id: turnId, status: 'inProgress' } });
+          if (hang) continue;
+          const plan = plans?.[turns - 1] || { shouldReply: true, messages: [defaultMessage] };
+          const text = JSON.stringify(plan);
+          const first = plan.messages[0] ? text.indexOf(JSON.stringify(plan.messages[0])) + JSON.stringify(plan.messages[0]).length : Math.floor(text.length / 2);
+          const itemId = `item-${turnId}`;
+          later(() => {
+            emit({ method: 'item/started', params: { threadId, turnId, item: { id: itemId, type: 'agentMessage', phase: 'final_answer' } } });
+            emit({ method: 'item/agentMessage/delta', params: { threadId, turnId, itemId, delta: text.slice(0, first) } });
+            later(() => {
+              emit({ method: 'item/agentMessage/delta', params: { threadId, turnId, itemId, delta: text.slice(first) } });
+              emit({ method: 'thread/tokenUsage/updated', params: { threadId, turnId, tokenUsage: { last: { cachedInputTokens: turns > 1 ? 1024 : 0, inputTokens: 2048 } } } });
+              completedTurns += 1;
+              emit({ method: 'turn/completed', params: { threadId, turn: { id: turnId, status: 'completed' } } });
+            });
+          });
+        }
+      }
+      callback();
+    } });
+    child.kill = () => { if (stopped) return true; stopped = true; for (const timer of timers) clearTimeout(timer); child.exitCode = 0; queueMicrotask(() => child.emit('close', 0)); return true; };
+    return child;
+  };
+
+  return { spawnImpl, requests, launches, completedTurns: () => completedTurns };
+}

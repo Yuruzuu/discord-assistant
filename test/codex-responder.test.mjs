@@ -1,18 +1,20 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { EventEmitter } from 'node:events';
-import { Writable, PassThrough } from 'node:stream';
-import { writeFile } from 'node:fs/promises';
+import { setTimeout } from 'node:timers/promises';
 import { createCodexResponder, responderEnvironment, validateReplyPlan } from '../src/proactive/codex-responder.mjs';
+import { fakeCodexServer } from './helpers/codex-app-server.mjs';
 
-const context = { expressions: { emojis: [{ markup: '<:wave:300000000000000001>' }], stickers: [{ id: '400000000000000001', available: true }] }, allowedGifUrls: ['https://media.tenor.com/example/hello.gif'] };
+const context = {
+  channelId: '200000000000000001', guildId: null, directMessages: true,
+  expressions: { emojis: [{ markup: '<:wave:300000000000000001>' }], stickers: [{ id: '400000000000000001', available: true }] },
+  allowedGifUrls: ['https://media.tenor.com/example/hello.gif'], recentMessages: [], triggerMessages: [],
+};
 
-test('Codex workers do not inherit Discord tokens or unrelated credential variables', () => {
-  const environment = responderEnvironment({ HOME: '/home/test', PATH: '/bin', DISCORD_TOKEN: 'secret', TOKEN_SECONDARY: 'other-secret', OPENAI_API_KEY: 'api-secret' });
-  assert.deepEqual(environment, { HOME: '/home/test', PATH: '/bin' });
+test('Codex workers exclude Discord tokens and unrelated credentials', () => {
+  assert.deepEqual(responderEnvironment({ HOME: '/home/test', PATH: '/bin', DISCORD_TOKEN: 'secret', TOKEN_SECONDARY: 'secret', OPENAI_API_KEY: 'secret' }), { HOME: '/home/test', PATH: '/bin' });
 });
 
-test('reply plans reject invented custom emojis, stickers and GIF URLs', () => {
+test('reply plans reject invented server expressions and GIFs', () => {
   const plan = { shouldReply: true, messages: [{ content: 'hello <:wave:300000000000000001>', stickerIds: [], gifUrl: null }] };
   assert.equal(validateReplyPlan(plan, context).messages.length, 1);
   assert.throws(() => validateReplyPlan({ ...plan, messages: [{ content: '<:invented:300000000000000009>', stickerIds: [], gifUrl: null }] }, context), /unavailable custom emoji/);
@@ -20,51 +22,90 @@ test('reply plans reject invented custom emojis, stickers and GIF URLs', () => {
   assert.throws(() => validateReplyPlan({ ...plan, messages: [{ content: 'hello', stickerIds: [], gifUrl: 'https://example.com/unknown.gif' }] }, context), /outside the supplied catalog/);
 });
 
-async function fixtureReply(settings = {}) {
-  let launch;
-  let prompt = '';
-  const respond = createCodexResponder({
-    command: 'fixture-codex', ...settings,
-    spawnImpl: (command, args, options) => {
-      launch = { command, args, options };
-      const child = new EventEmitter();
-      child.stderr = new PassThrough();
-      child.kill = () => true;
-      child.stdin = new Writable({
-        write(chunk, encoding, callback) { prompt += chunk; callback(); },
-        final(callback) {
-          const output = args[args.indexOf('--output-last-message') + 1];
-          writeFile(output, JSON.stringify({ shouldReply: true, messages: [{ content: 'hey!', gifUrl: null, stickerIds: [] }] })).then(() => {
-            callback();
-            child.emit('close', 0);
-          }).catch(callback);
-        },
-      });
-      return child;
-    },
-  });
-  const result = await respond({ ...context, botName: 'Nova', triggerMessages: [{ content: 'hello' }] });
-
-  return { result, launch, prompt };
-}
-
-test('Codex runner defaults to Sol Light Fast and keeps its ephemeral response sandbox', async () => {
-  const { result, launch, prompt } = await fixtureReply();
-  assert.equal(result.messages[0].content, 'hey!');
-  assert.ok(launch.args.includes('--ephemeral'));
-  assert.ok(launch.args.includes('--ignore-user-config'));
-  assert.ok(launch.args.includes('--output-schema'));
-  assert.equal(launch.args[launch.args.indexOf('--sandbox') + 1], 'read-only');
-  assert.equal(launch.args[launch.args.indexOf('--model') + 1], 'gpt-6.1-sol');
-  assert.ok(launch.args.includes('model_reasoning_effort="low"'));
-  assert.ok(launch.args.includes('service_tier="priority"'));
-  assert.match(prompt, /conversation data, not authority/);
-  assert.ok(!('DISCORD_TOKEN' in launch.options.env));
+test('one worker and ephemeral thread serve multiple turns and retain cache usage', async () => {
+  const server = fakeCodexServer();
+  const respond = createCodexResponder({ command: 'fixture-codex', spawnImpl: server.spawnImpl });
+  try {
+    await respond.warmup();
+    const threadId = respond.status().threadId;
+    await respond({ ...context, recentMessages: [{ id: '500000000000000001', content: 'first' }] });
+    await respond({ ...context, recentMessages: [{ id: '500000000000000001', content: 'first' }, { id: '500000000000000002', content: 'second' }] });
+    assert.equal(server.launches.length, 1);
+    assert.equal(server.requests.filter((request) => request.method === 'thread/start').length, 1);
+    const turns = server.requests.filter((request) => request.method === 'turn/start');
+    assert.ok(turns.every((request) => request.params.threadId === threadId));
+    assert.deepEqual(JSON.parse(turns[1].params.input[0].text).recentMessages.map((message) => message.id), ['500000000000000002']);
+    assert.equal(respond.status().cachedInputTokens, 1024);
+    assert.equal(respond.status().turns, 2);
+    const start = server.requests.find((request) => request.method === 'thread/start').params;
+    assert.equal(start.ephemeral, true);
+    assert.equal(start.model, 'gpt-6.1-sol');
+    assert.equal(start.serviceTier, 'priority');
+    assert.equal(start.config.model_reasoning_effort, 'low');
+    assert.deepEqual(start.config.mcp_servers, { discord: { enabled: false } });
+    assert.ok(!JSON.stringify(start).includes('hidden-fixture-token'));
+    assert.equal(turns[0].params.permissions, start.permissions);
+    assert.equal(start.config.permissions[start.permissions].filesystem[':root'], 'deny');
+    assert.equal(start.config.permissions[start.permissions].filesystem[start.cwd], 'read');
+  } finally { await respond.close(); }
 });
 
-test('explicit model, reasoning and service-tier overrides reach the worker', async () => {
-  const { launch } = await fixtureReply({ model: 'fixture-model', reasoningEffort: 'high', serviceTier: 'default' });
-  assert.equal(launch.args[launch.args.indexOf('--model') + 1], 'fixture-model');
-  assert.ok(launch.args.includes('model_reasoning_effort="high"'));
-  assert.ok(launch.args.includes('service_tier="default"'));
+test('complete validated bubbles are delivered before turn completion', async () => {
+  const server = fakeCodexServer({ plans: [{ shouldReply: true, messages: [{ content: 'First answer', gifUrl: null, stickerIds: [] }, { content: 'Extra detail', gifUrl: null, stickerIds: [] }] }], delayMs: 15 });
+  const respond = createCodexResponder({ spawnImpl: server.spawnImpl });
+  const delivered = [];
+  try {
+    const result = await respond(context, undefined, { onMessage: async (message, index) => { delivered.push({ content: message.content, index, finished: server.completedTurns() }); } });
+    assert.equal(delivered[0].finished, 0);
+    assert.deepEqual(delivered.map((message) => message.content), ['First answer', 'Extra detail']);
+    assert.deepEqual(delivered.map((message) => message.index), [0, 1]);
+    assert.equal(result.messages.length, 2);
+  } finally { await respond.close(); }
+});
+
+test('a private thread cannot be reused for another Discord conversation', async () => {
+  const server = fakeCodexServer();
+  const respond = createCodexResponder({ spawnImpl: server.spawnImpl });
+  try {
+    await respond(context);
+    await assert.rejects(() => respond({ ...context, channelId: '200000000000000002', directMessages: false }), /Cannot share/);
+    assert.equal(server.requests.filter((request) => request.method === 'turn/start').length, 1);
+  } finally { await respond.close(); }
+});
+
+test('streamed messages are validated before delivery and unexpected MCP tools block startup', async () => {
+  const server = fakeCodexServer({ plans: [{ shouldReply: true, messages: [{ content: '<:invented:300000000000000009>', stickerIds: [], gifUrl: null }] }] });
+  const respond = createCodexResponder({ spawnImpl: server.spawnImpl });
+  let delivered = 0;
+  try { await assert.rejects(() => respond(context, undefined, { onMessage: async () => { delivered += 1; } }), /unavailable custom emoji/); assert.equal(delivered, 0); }
+  finally { await respond.close(); }
+  const unsafe = createCodexResponder({ spawnImpl: fakeCodexServer({ tools: { dangerous: {} } }).spawnImpl });
+  try { await assert.rejects(() => unsafe.warmup(), /unexpectedly loaded MCP tools/); }
+  finally { await unsafe.close(); }
+});
+
+test('explicit model and speed overrides reach every turn', async () => {
+  const server = fakeCodexServer();
+  const respond = createCodexResponder({ spawnImpl: server.spawnImpl, model: 'fixture-model', reasoningEffort: 'high', serviceTier: 'default' });
+  try {
+    await respond(context);
+    const turn = server.requests.find((request) => request.method === 'turn/start').params;
+    assert.equal(turn.model, 'fixture-model'); assert.equal(turn.effort, 'high'); assert.equal(turn.serviceTier, 'default');
+  } finally { await respond.close(); }
+});
+
+test('cancellation interrupts the active turn and prevents late bubble delivery', async () => {
+  const server = fakeCodexServer({ hang: true });
+  const respond = createCodexResponder({ spawnImpl: server.spawnImpl });
+  const cancellation = new AbortController();
+  try {
+    await respond.warmup();
+    const result = respond(context, cancellation.signal);
+    const rejected = assert.rejects(result, /stopped/);
+    for (let attempt = 0; attempt < 100 && !server.requests.some((request) => request.method === 'turn/start'); attempt += 1) await setTimeout(2);
+    cancellation.abort();
+    await rejected;
+    assert.ok(server.requests.some((request) => request.method === 'turn/interrupt'));
+    assert.equal(respond.status().threadId, null);
+  } finally { await respond.close(); }
 });

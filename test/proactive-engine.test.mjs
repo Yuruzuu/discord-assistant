@@ -192,3 +192,44 @@ test('listener cancellation immediately stops typing renewal during an active ge
     await until(() => !engine.status().generating);
   } finally { engine.stop(); }
 });
+
+test('streamed bubbles arrive before generation completes and are not sent again at completion', async () => {
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const messages = [{ content: 'First' }, { content: 'Second' }];
+  const offsets = [];
+  const sent = [];
+  const { engine } = fixture({
+    generateReply: async (_, signal, { onMessage }) => {
+      await onMessage(messages[0], 0);
+      await gate;
+      await onMessage(messages[1], 1);
+      return { shouldReply: true, messages };
+    },
+    sendReplies: async (messages, trigger, signal, { offset }) => { offsets.push(offset); sent.push(...messages); return { sentMessages: messages }; },
+  });
+  try {
+    await engine.receive(message({ mentions: [{ id: botUserId }] }));
+    await until(() => sent.length === 1);
+    assert.equal(engine.status().generating, true);
+    release();
+    await until(() => !engine.status().generating);
+    assert.deepEqual(sent, messages);
+    assert.deepEqual(offsets, [0, 1]);
+    assert.equal(engine.status().sentMessages, 2);
+    assert.equal(engine.status().streamedMessages, 2);
+  } finally { release(); engine.stop(); }
+});
+
+test('generation failure after streaming preserves partial receipts and stops the remaining reply', async () => {
+  const { engine, sends } = fixture({ generateReply: async (_, signal, { onMessage }) => {
+    await onMessage({ content: 'First' }, 0);
+    throw new Error('Connection lost');
+  } });
+  try {
+    await engine.receive(message({ mentions: [{ id: botUserId }] }));
+    await until(() => engine.status().errors === 1);
+    assert.equal(sends.length, 1);
+    assert.equal(engine.status().sentMessages, 1);
+  } finally { engine.stop(); }
+});

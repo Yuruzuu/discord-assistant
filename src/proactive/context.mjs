@@ -40,6 +40,7 @@ export function createConversationContext(client, { bot, guild, channel, directM
     }
 
     return {
+      channelId: channel.id, guildId: guild?.id || null,
       botName: bot.username, serverName: guild?.name || null, channelName: channel.name || 'Direct Messages',
       ...(directMessages ? { directMessages: true, ownerUserId: directMessageOwnerId } : {}),
       expressions, allowedGifUrls: [...gifs].slice(0, 20),

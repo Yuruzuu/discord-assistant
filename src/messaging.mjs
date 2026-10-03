@@ -54,7 +54,7 @@ export async function sendMessage(service, { guildId, channelId, content, sticke
   return sendResolvedMessage(resolution, { guildId, channelId, content, stickerIds, gifUrl, replyToMessageId, mentionRepliedUser, allowMentions, nonce }, signal);
 }
 
-async function sendResolvedMessage({ account, channel }, { guildId, channelId, content, stickerIds = [], gifUrl, replyToMessageId, mentionRepliedUser = false, allowMentions = false, nonce }, signal) {
+export async function sendResolvedMessage({ account, channel }, { guildId, channelId, content, stickerIds = [], gifUrl, replyToMessageId, mentionRepliedUser = false, allowMentions = false, nonce }, signal) {
   const messageContent = validateMessage({ content, stickerIds, gifUrl, replyToMessageId, mentionRepliedUser, nonce });
   signal?.throwIfAborted();
   const messageNonce = nonce ?? randomBytes(12).toString('hex');

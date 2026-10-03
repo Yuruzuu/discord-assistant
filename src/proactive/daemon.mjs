@@ -1,10 +1,9 @@
 import { createServer } from 'node:http';
-import { createHash, timingSafeEqual } from 'node:crypto';
+import { timingSafeEqual } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { loadConfig } from '../config.mjs';
 import { DiscordService } from '../service.mjs';
-import { sendMessageBatch } from '../messaging.mjs';
 import { createCodexResponder } from './codex-responder.mjs';
 import { createConversationContext } from './context.mjs';
 import { createProactiveEngine } from './engine.mjs';
@@ -14,6 +13,7 @@ import { createStateWriter } from './state-writer.mjs';
 import { assertOwnerDirectMessageChannel, directMessageOwnerId } from './target.mjs';
 import { startTypingIndicator } from './typing.mjs';
 import { replyDefaults } from './reply-defaults.mjs';
+import { createReplySender } from './reply-sender.mjs';
 
 async function main() {
   const filename = process.argv[2];
@@ -37,6 +37,7 @@ async function main() {
   const stateWriter = createStateWriter((snapshot) => writeState(paths.status, snapshot), { onError: (error) => process.stderr.write(`[discord-proactive] status write failed: ${error.message}\n`) });
   let engine;
   let gateway;
+  let generateReply;
   let shuttingDown = false;
 
   function updateState(patch) {
@@ -55,6 +56,7 @@ async function main() {
     shuttingDown = true;
     engine?.stop();
     gateway?.close();
+    await generateReply?.close();
     await updateState({ running: false, state: 'stopped', stoppedAt: new Date().toISOString() });
     server.close();
     setTimeout(() => process.exit(0), 1000);
@@ -69,7 +71,7 @@ async function main() {
     }
     response.setHeader('content-type', 'application/json');
     if (request.method === 'GET' && request.url === '/status') {
-      response.end(JSON.stringify(state));
+      response.end(JSON.stringify({ ...state, ...(generateReply ? { conversation: generateReply.status() } : {}) }));
     } else if (request.method === 'POST' && request.url === '/stop') {
       response.end(JSON.stringify({ ...state, running: false, state: 'stopping' }));
       void shutdown();
@@ -90,19 +92,18 @@ async function main() {
       client.getCurrentUser(), configuration.directMessages ? null : client.getGuild(configuration.guildId), client.getChannel(configuration.channelId),
     ]);
     if (configuration.directMessages) assertOwnerDirectMessageChannel(channel);
-    const generateReply = createCodexResponder({ command: configuration.codexCommand, model: state.model, reasoningEffort: state.reasoningEffort, serviceTier: state.serviceTier });
+    const scope = { channelId: configuration.channelId, guildId: guild?.id || null, directMessages: Boolean(configuration.directMessages) };
+    generateReply = createCodexResponder({ command: configuration.codexCommand, model: state.model, reasoningEffort: state.reasoningEffort, serviceTier: state.serviceTier, scope });
+    await generateReply.warmup();
+    const conversationContext = createConversationContext(client, { bot, guild, channel, directMessages: configuration.directMessages, gifUrls: configuration.gifUrls });
     engine = createProactiveEngine({
       ...configuration, botUserId: bot.id,
       resolveReplyAuthor: async (messageId) => (await client.getMessage(configuration.channelId, messageId)).author?.id,
-      getContext: createConversationContext(client, { bot, guild, channel, directMessages: configuration.directMessages, gifUrls: configuration.gifUrls }),
+      getContext: conversationContext,
       startTyping: (signal) => startTypingIndicator((typingSignal) => client.triggerTyping(configuration.channelId, { signal: typingSignal }), { signal }),
       generateReply,
-      sendReplies: (messages, trigger, signal) => sendMessageBatch(service, {
-        guildId: configuration.guildId, channelId: configuration.channelId, messages,
-        replyToMessageId: trigger.id, intervalMs: 650,
-        batchId: createHash('sha256').update(`${configuration.listenerId}:${trigger.id}`).digest('hex').slice(0, 20),
-      }, { signal }),
-      onStatus: (statistics) => { void updateState({ statistics }); },
+      sendReplies: createReplySender(service, configuration),
+      onStatus: (statistics) => { void updateState({ statistics, conversation: generateReply.status() }); },
     });
     gateway = createGateway({
       token: account.token, guildId: configuration.guildId, channelId: configuration.channelId,
@@ -115,6 +116,7 @@ async function main() {
   } catch (error) {
     engine?.stop();
     gateway?.close();
+    await generateReply?.close();
     if (shuttingDown) return;
     await updateState({ running: false, state: 'failed', lastError: errorMessage(error) });
     server.close();

@@ -10,7 +10,7 @@ export function createProactiveEngine({ botUserId, guildId, channelId, directMes
   const seen = new Set();
   const replyTimes = [];
   const cancellation = new AbortController();
-  const statistics = { received: 0, triggered: 0, replyBatches: 0, sentMessages: 0, skipped: 0, errors: 0, queued: 0, lastError: null };
+  const statistics = { received: 0, triggered: 0, replyBatches: 0, sentMessages: 0, streamedMessages: 0, lastFirstResponseMs: null, skipped: 0, errors: 0, queued: 0, lastError: null };
   let busy = false;
   let stopped = false;
   let lastReplyAt = -Infinity;
@@ -39,13 +39,26 @@ export function createProactiveEngine({ botUserId, guildId, channelId, directMes
         replyTimes.push(now());
         lastReplyAt = now();
         const stopTyping = startTyping(cancellation.signal);
+        let streamed = 0;
         try {
           const context = await getContext(batch.messages, cancellation.signal);
           cancellation.signal.throwIfAborted();
-          const response = await generateReply({ ...context, triggerMessages: batch.messages, mode }, cancellation.signal);
+          const response = await generateReply({ ...context, triggerMessages: batch.messages, mode }, cancellation.signal, { onMessage: async (message, index, deliverySignal) => {
+            if (index !== streamed || streamed >= 5) throw new Error('Reply bubbles arrived out of order');
+            cancellation.signal.throwIfAborted();
+            const receipt = await sendReplies([message], batch.messages.at(-1), deliverySignal || cancellation.signal, { offset: streamed });
+            if (streamed === 0) statistics.lastFirstResponseMs = now() - batch.firstReceivedAt;
+            streamed += 1;
+            statistics.sentMessages += receipt.sentMessages.length;
+            statistics.streamedMessages += receipt.sentMessages.length;
+            lastReplyAt = now();
+            report();
+          } });
           if (!response.shouldReply || stopped) { statistics.skipped += batch.messages.length; continue; }
           cancellation.signal.throwIfAborted();
-          const sent = await sendReplies(response.messages, batch.messages.at(-1), cancellation.signal);
+          const remaining = response.messages.slice(streamed);
+          const sent = remaining.length ? await sendReplies(remaining, batch.messages.at(-1), cancellation.signal, { offset: streamed }) : { sentMessages: [] };
+          if (!streamed && sent.sentMessages.length) statistics.lastFirstResponseMs = now() - batch.firstReceivedAt;
           statistics.replyBatches += 1;
           statistics.sentMessages += sent.sentMessages.length;
           lastReplyAt = now();
