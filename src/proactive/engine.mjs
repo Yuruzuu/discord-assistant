@@ -4,7 +4,7 @@ export function isQuestion(content) {
   return /\?|^(?:\s|<@!?\d+>)*(?:what|why|how|where|when|who|can|could|would|should|is|are|does|do|help)\b/i.test(content || '');
 }
 
-export function createProactiveEngine({ botUserId, guildId, channelId, directMessages = false, mode = 'mentions', batchWindowMs = 1500, cooldownMs = 5000, maxRepliesPerMinute = 6, resolveReplyAuthor, getContext, generateReply, sendReplies, now = Date.now, sleep = wait, onStatus = () => {} }) {
+export function createProactiveEngine({ botUserId, guildId, channelId, directMessages = false, mode = 'mentions', batchWindowMs = 1500, cooldownMs = 5000, maxRepliesPerMinute = 6, resolveReplyAuthor, getContext, generateReply, sendReplies, startTyping = () => () => {}, now = Date.now, sleep = wait, onStatus = () => {} }) {
   const pending = new Map();
   const queue = [];
   const seen = new Set();
@@ -38,6 +38,7 @@ export function createProactiveEngine({ botUserId, guildId, channelId, directMes
         const batch = queue.shift();
         replyTimes.push(now());
         lastReplyAt = now();
+        const stopTyping = startTyping(cancellation.signal);
         try {
           const context = await getContext(batch.messages, cancellation.signal);
           cancellation.signal.throwIfAborted();
@@ -57,7 +58,7 @@ export function createProactiveEngine({ botUserId, guildId, channelId, directMes
             statistics.sentMessages += error.sentMessages.length;
             lastReplyAt = now();
           }
-        }
+        } finally { stopTyping(); }
         report();
       }
     } catch (error) {

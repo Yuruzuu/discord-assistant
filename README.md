@@ -225,6 +225,12 @@ token in its environment. The generated reply is checked against an output
 schema and the available expression catalog before sending.
 
 Replies use the native reply feature and can be a few playful short bubbles.
+The bot shows a typing indicator while gathering context, generating a reply
+and sending its message batch, in server channels and owner DMs. It refreshes
+the indicator every seven seconds while working and stops on completion,
+failure or cancellation. Typing failures do not prevent a reply. Discord lets
+the last typing indication expire after ten seconds; idle listeners do not
+keep an indicator running. See [Discord's typing documentation](https://docs.discord.com/developers/resources/channel#trigger-typing-indicator).
 Available server emojis, stickers, optional `gifUrls`, recent channel GIF links,
 and animated emoji GIFs can provide expressions. Replies never ping users or
 roles automatically. An uncertain send is not blindly retried.

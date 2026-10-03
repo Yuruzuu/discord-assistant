@@ -26,19 +26,21 @@ function engineFixture() {
   const sent = [];
   let contextCalls = 0;
   let referenceCalls = 0;
+  let typingCalls = 0;
   const engine = createProactiveEngine({
     botUserId, channelId, directMessages: true, batchWindowMs: 5, cooldownMs: 0,
     resolveReplyAuthor: async () => { referenceCalls += 1; return botUserId; },
     getContext: async () => { contextCalls += 1; return { directMessages: true }; },
+    startTyping: () => { typingCalls += 1; return () => {}; },
     generateReply: async (context) => { generated.push(context); return { shouldReply: true, messages: [{ content: 'hey!' }] }; },
     sendReplies: async (messages, trigger) => { sent.push({ messages, trigger }); return { sentMessages: messages }; },
   });
 
-  return { engine, generated, sent, contextCalls: () => contextCalls, referenceCalls: () => referenceCalls };
+  return { engine, generated, sent, contextCalls: () => contextCalls, referenceCalls: () => referenceCalls, typingCalls: () => typingCalls };
 }
 
 test('owner DMs reply without a mention and keep native reply targets and deduplication', async () => {
-  const { engine, generated, sent, referenceCalls } = engineFixture();
+  const { engine, generated, sent, referenceCalls, typingCalls } = engineFixture();
   try {
     const incoming = message({ message_reference: { message_id: '600000000000000001' } });
     assert.equal(await engine.receive(incoming), true);
@@ -46,6 +48,7 @@ test('owner DMs reply without a mention and keep native reply targets and dedupl
     assert.equal(sent[0].trigger.id, incoming.id);
     assert.equal(generated[0].triggerMessages[0].content, 'hello');
     assert.equal(referenceCalls(), 0);
+    assert.equal(typingCalls(), 1);
     assert.equal(await engine.receive(incoming), false);
     await setTimeout(10);
     assert.equal(sent.length, 1);
@@ -53,7 +56,7 @@ test('owner DMs reply without a mention and keep native reply targets and dedupl
 });
 
 test('other DM authors and guild messages cannot reach context lookup or generation', async () => {
-  const { engine, generated, sent, contextCalls, referenceCalls } = engineFixture();
+  const { engine, generated, sent, contextCalls, referenceCalls, typingCalls } = engineFixture();
   try {
     for (const incoming of [
       message({ author: { id: strangerId }, mentions: [{ id: botUserId }], message_reference: { message_id: '600000000000000001' } }),
@@ -65,6 +68,7 @@ test('other DM authors and guild messages cannot reach context lookup or generat
     await setTimeout(10);
     assert.equal(contextCalls(), 0);
     assert.equal(referenceCalls(), 0);
+    assert.equal(typingCalls(), 0);
     assert.equal(generated.length, 0);
     assert.equal(sent.length, 0);
     assert.equal(engine.status().queued, 0);

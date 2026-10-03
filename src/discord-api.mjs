@@ -325,6 +325,10 @@ export class DiscordApiClient {
     return this.post(`/channels/${channelId}/messages`, payload, options);
   }
 
+  triggerTyping(channelId, options) {
+    return this.post(`/channels/${channelId}/typing`, undefined, options);
+  }
+
   listMessages(channelId, { limit = 50, before, after, around } = {}) {
     const query = new URLSearchParams({ limit: String(Math.min(Math.max(Number(limit) || 50, 1), 100)) });
     if (before) query.set('before', before);

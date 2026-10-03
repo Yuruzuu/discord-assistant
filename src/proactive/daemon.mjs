@@ -12,6 +12,7 @@ import { createGateway } from './gateway.mjs';
 import { listenerPaths, directMessagePaths, writeState } from './state.mjs';
 import { createStateWriter } from './state-writer.mjs';
 import { assertOwnerDirectMessageChannel, directMessageOwnerId } from './target.mjs';
+import { startTypingIndicator } from './typing.mjs';
 
 async function main() {
   const filename = process.argv[2];
@@ -91,6 +92,7 @@ async function main() {
       ...configuration, botUserId: bot.id,
       resolveReplyAuthor: async (messageId) => (await client.getMessage(configuration.channelId, messageId)).author?.id,
       getContext: createConversationContext(client, { bot, guild, channel, directMessages: configuration.directMessages, gifUrls: configuration.gifUrls }),
+      startTyping: (signal) => startTypingIndicator((typingSignal) => client.triggerTyping(configuration.channelId, { signal: typingSignal }), { signal }),
       generateReply,
       sendReplies: (messages, trigger, signal) => sendMessageBatch(service, {
         guildId: configuration.guildId, channelId: configuration.channelId, messages,

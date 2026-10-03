@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { setTimeout } from 'node:timers/promises';
 import { createProactiveEngine } from '../src/proactive/engine.mjs';
+import { startTypingIndicator } from '../src/proactive/typing.mjs';
 
 const guildId = '100000000000000001';
 const channelId = '200000000000000001';
@@ -134,5 +135,60 @@ test('generation failures release the queue and obey cooldown before another att
     await engine.receive(message({ mentions: [{ id: botUserId }], author: { id: '500000000000000002' } }));
     await until(() => sends.length === 1);
     assert.deepEqual(waits, [100]);
+  } finally { engine.stop(); }
+});
+
+test('typing covers context lookup, generation and sending, while idle messages do not trigger it', async () => {
+  const events = [];
+  let typing = false;
+  const { engine } = fixture({
+    startTyping: () => { typing = true; events.push('typing'); return () => { typing = false; events.push('stopped'); }; },
+    getContext: async () => { assert.equal(typing, true); events.push('context'); return {}; },
+    generateReply: async () => { assert.equal(typing, true); events.push('generate'); return { shouldReply: true, messages: [{ content: 'hello' }] }; },
+    sendReplies: async (messages) => { await setTimeout(10); assert.equal(typing, true); events.push('send'); return { sentMessages: messages }; },
+  });
+  try {
+    await engine.receive(message({ content: 'ordinary chatter' }));
+    await setTimeout(10);
+    assert.deepEqual(events, []);
+    await engine.receive(message({ mentions: [{ id: botUserId }] }));
+    await until(() => events.includes('stopped'));
+    assert.deepEqual(events, ['typing', 'context', 'generate', 'send', 'stopped']);
+  } finally { engine.stop(); }
+});
+
+test('declining a reply or failing generation releases the typing indicator', async () => {
+  for (const outcome of ['skip', 'error']) {
+    let started = 0;
+    let stopped = 0;
+    const { engine, sends } = fixture({
+      startTyping: () => { started += 1; return () => { stopped += 1; }; },
+      generateReply: async () => { if (outcome === 'error') throw new Error('Provider unavailable'); return { shouldReply: false, messages: [] }; },
+    });
+    try {
+      await engine.receive(message({ mentions: [{ id: botUserId }] }));
+      await until(() => stopped === 1);
+      assert.equal(started, 1);
+      assert.equal(sends.length, 0);
+    } finally { engine.stop(); }
+  }
+});
+
+test('listener cancellation immediately stops typing renewal during an active generation', async () => {
+  let pulses = 0;
+  const { engine } = fixture({
+    startTyping: (signal) => startTypingIndicator(async () => { pulses += 1; }, { signal, intervalMs: 5 }),
+    generateReply: (_, signal) => new Promise((resolve, reject) => {
+      signal.addEventListener('abort', () => reject(new DOMException('Stopped', 'AbortError')), { once: true });
+    }),
+  });
+  try {
+    await engine.receive(message({ mentions: [{ id: botUserId }] }));
+    await until(() => pulses >= 2);
+    engine.stop();
+    const completed = pulses;
+    await setTimeout(20);
+    assert.equal(pulses, completed);
+    await until(() => !engine.status().generating);
   } finally { engine.stop(); }
 });
