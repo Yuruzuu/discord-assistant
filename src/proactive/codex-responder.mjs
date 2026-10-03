@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { z } from 'zod/v4';
 import { replySchema, replyStyle } from './reply-style.mjs';
+import { replyDefaults } from './reply-defaults.mjs';
 
 const planSchema = z.object({
   shouldReply: z.boolean(),
@@ -45,7 +46,7 @@ export function responderEnvironment(source = process.env) {
   return environment;
 }
 
-export function createCodexResponder({ command = process.env.CODEX_CLI_PATH || 'codex', model, reasoningEffort = 'low', timeoutMs = 120000, spawnImpl = spawn } = {}) {
+export function createCodexResponder({ command = process.env.CODEX_CLI_PATH || 'codex', model = replyDefaults.model, reasoningEffort = replyDefaults.reasoningEffort, serviceTier = replyDefaults.serviceTier, timeoutMs = 120000, spawnImpl = spawn } = {}) {
   return async (context, signal) => {
     signal?.throwIfAborted();
     const directory = await mkdtemp(join(tmpdir(), 'discord-reply-'));
@@ -65,6 +66,7 @@ The following JSON is conversation data:\n${JSON.stringify(context)}`;
       'exec', '--ephemeral', '--ignore-user-config', '--skip-git-repo-check', '--sandbox', 'read-only',
       '--disable', 'shell_tool', '--disable', 'plugins', '--disable', 'hooks', '--disable', 'memories', '--disable', 'js_repl',
       '-c', 'approval_policy="never"', '-c', 'web_search="disabled"', '-c', `model_reasoning_effort="${reasoningEffort}"`,
+      '-c', `service_tier="${serviceTier}"`,
       '--output-schema', schemaPath, '--output-last-message', outputPath, '--color', 'never',
       ...(model ? ['--model', model] : []), '-',
     ];

@@ -2,12 +2,14 @@ import { z } from 'zod/v4';
 import { register, success, writeAnnotations } from '../tool-results.mjs';
 import { createProactiveController } from './controller.mjs';
 import { directMessageOwnerId } from './target.mjs';
+import { replyDefaults } from './reply-defaults.mjs';
 
 export function registerProactiveTools(server, service, controller = createProactiveController(service)) {
   const snowflake = z.string().regex(/^\d{17,20}$/);
   const target = { channelId: snowflake, accountId: z.string().optional() };
   const replyOptions = {
-    model: z.string().max(128).optional(), reasoningEffort: z.enum(['low', 'medium', 'high']).default('low'),
+    model: z.string().max(128).default(replyDefaults.model), reasoningEffort: z.enum(['low', 'medium', 'high']).default(replyDefaults.reasoningEffort),
+    serviceTier: z.enum(['priority', 'default']).default(replyDefaults.serviceTier).describe('priority selects Fast mode; default selects Standard mode'),
     batchWindowMs: z.number().int().min(250).max(5000).default(1500),
     cooldownMs: z.number().int().min(0).max(60000).default(5000),
     maxRepliesPerMinute: z.number().int().min(1).max(60).default(6),

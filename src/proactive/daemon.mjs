@@ -13,6 +13,7 @@ import { listenerPaths, directMessagePaths, writeState } from './state.mjs';
 import { createStateWriter } from './state-writer.mjs';
 import { assertOwnerDirectMessageChannel, directMessageOwnerId } from './target.mjs';
 import { startTypingIndicator } from './typing.mjs';
+import { replyDefaults } from './reply-defaults.mjs';
 
 async function main() {
   const filename = process.argv[2];
@@ -27,7 +28,9 @@ async function main() {
   let state = {
     listenerId: configuration.listenerId, running: false, state: 'starting',
     accountId: account.id, guildId: configuration.guildId, channelId: configuration.channelId,
-    mode: configuration.mode, model: configuration.model || null, startedAt: new Date().toISOString(),
+    mode: configuration.mode, model: configuration.model || replyDefaults.model,
+    reasoningEffort: configuration.reasoningEffort || replyDefaults.reasoningEffort,
+    serviceTier: configuration.serviceTier || replyDefaults.serviceTier, startedAt: new Date().toISOString(),
     ...(configuration.directMessages ? { directMessages: true, ownerUserId: directMessageOwnerId } : {}),
     lastError: null, statistics: {},
   };
@@ -87,7 +90,7 @@ async function main() {
       client.getCurrentUser(), configuration.directMessages ? null : client.getGuild(configuration.guildId), client.getChannel(configuration.channelId),
     ]);
     if (configuration.directMessages) assertOwnerDirectMessageChannel(channel);
-    const generateReply = createCodexResponder({ command: configuration.codexCommand, model: configuration.model, reasoningEffort: configuration.reasoningEffort });
+    const generateReply = createCodexResponder({ command: configuration.codexCommand, model: state.model, reasoningEffort: state.reasoningEffort, serviceTier: state.serviceTier });
     engine = createProactiveEngine({
       ...configuration, botUserId: bot.id,
       resolveReplyAuthor: async (messageId) => (await client.getMessage(configuration.channelId, messageId)).author?.id,

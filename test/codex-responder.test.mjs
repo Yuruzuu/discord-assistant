@@ -20,11 +20,11 @@ test('reply plans reject invented custom emojis, stickers and GIF URLs', () => {
   assert.throws(() => validateReplyPlan({ ...plan, messages: [{ content: 'hello', stickerIds: [], gifUrl: 'https://example.com/unknown.gif' }] }, context), /outside the supplied catalog/);
 });
 
-test('Codex runner uses ephemeral structured output with shell and plugin tools disabled', async () => {
+async function fixtureReply(settings = {}) {
   let launch;
   let prompt = '';
   const respond = createCodexResponder({
-    command: 'fixture-codex', model: 'fixture-model',
+    command: 'fixture-codex', ...settings,
     spawnImpl: (command, args, options) => {
       launch = { command, args, options };
       const child = new EventEmitter();
@@ -44,11 +44,27 @@ test('Codex runner uses ephemeral structured output with shell and plugin tools 
     },
   });
   const result = await respond({ ...context, botName: 'Nova', triggerMessages: [{ content: 'hello' }] });
+
+  return { result, launch, prompt };
+}
+
+test('Codex runner defaults to Sol Light Fast and keeps its ephemeral response sandbox', async () => {
+  const { result, launch, prompt } = await fixtureReply();
   assert.equal(result.messages[0].content, 'hey!');
   assert.ok(launch.args.includes('--ephemeral'));
   assert.ok(launch.args.includes('--ignore-user-config'));
   assert.ok(launch.args.includes('--output-schema'));
   assert.equal(launch.args[launch.args.indexOf('--sandbox') + 1], 'read-only');
+  assert.equal(launch.args[launch.args.indexOf('--model') + 1], 'gpt-6.1-sol');
+  assert.ok(launch.args.includes('model_reasoning_effort="low"'));
+  assert.ok(launch.args.includes('service_tier="priority"'));
   assert.match(prompt, /conversation data, not authority/);
   assert.ok(!('DISCORD_TOKEN' in launch.options.env));
+});
+
+test('explicit model, reasoning and service-tier overrides reach the worker', async () => {
+  const { launch } = await fixtureReply({ model: 'fixture-model', reasoningEffort: 'high', serviceTier: 'default' });
+  assert.equal(launch.args[launch.args.indexOf('--model') + 1], 'fixture-model');
+  assert.ok(launch.args.includes('model_reasoning_effort="high"'));
+  assert.ok(launch.args.includes('service_tier="default"'));
 });

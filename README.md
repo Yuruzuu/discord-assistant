@@ -217,8 +217,12 @@ It does not auto-start on login or when Codex opens.
 
 Nearby message bubbles from one author are grouped before generating a reply.
 Responses are generated one at a time, defaulting to a five-second cooldown and
-at most six model attempts per minute. The worker uses the configured Codex model
-unless `model` is specified, with `reasoningEffort: "low"` by default. It uses
+at most six model attempts per minute. Nova defaults to `gpt-6.1-sol`,
+`reasoningEffort: "low"` (Light) and `serviceTier: "priority"` (Fast).
+The defaults are independent of the global Codex model settings. Startup can
+override `model`, `reasoningEffort` or `serviceTier`; `"default"` selects Standard
+service. See the [Codex configuration reference](https://learn.chatgpt.com/docs/config-file/config-reference).
+The worker uses
 your Codex quota and existing saved CLI login. It runs ephemerally with shell,
 plugin, hook and web-search tools disabled, and does not receive the Discord bot
 token in its environment. The generated reply is checked against an output

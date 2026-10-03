@@ -1,22 +1,14 @@
 import { spawn, spawnSync } from 'node:child_process';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { closeSync, openSync } from 'node:fs';
-import { open, readFile, rm, writeFile } from 'node:fs/promises';
+import { open, rm, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as wait } from 'node:timers/promises';
 import { assertSnowflake } from '../discord-url.mjs';
 import { ensureStateRoot, listenerPaths, directMessagePaths, readState, writeState, proactiveRoot } from './state.mjs';
 import { assertOwnerDirectMessageChannel, directMessageOwnerId } from './target.mjs';
-
-async function defaultModel() {
-  try {
-    const text = await readFile(join(homedir(), '.codex', 'config.toml'), 'utf8');
-    const root = text.split(/^\[/m)[0];
-    const value = root.match(/^model\s*=\s*("(?:[^"\\]|\\.)*")/m)?.[1];
-    return value ? JSON.parse(value) : undefined;
-  } catch (error) { if (error.code === 'ENOENT') return undefined; throw error; }
-}
+import { replyDefaults } from './reply-defaults.mjs';
 
 async function controlRequest(configuration, method = 'GET', route = '/status') {
   const url = new URL(configuration.controlUrl);
@@ -81,7 +73,7 @@ export function createProactiveController(service, { entrypoint = process.env.DI
     finally { await lock.close(); await rm(lockPath, { force: true }); }
   }
 
-  async function startUnlocked({ guildId, channelId, accountId, directMessages = false, mode = 'mentions', model, reasoningEffort = 'low', batchWindowMs = 1500, cooldownMs = 5000, maxRepliesPerMinute = 6, gifUrls = [] }) {
+  async function startUnlocked({ guildId, channelId, accountId, directMessages = false, mode = 'mentions', model = replyDefaults.model, reasoningEffort = replyDefaults.reasoningEffort, serviceTier = replyDefaults.serviceTier, batchWindowMs = 1500, cooldownMs = 5000, maxRepliesPerMinute = 6, gifUrls = [] }) {
     if (!directMessages) {
       assertSnowflake(guildId, 'guildId');
       assertSnowflake(channelId, 'channelId');
@@ -120,7 +112,7 @@ export function createProactiveController(service, { entrypoint = process.env.DI
       listenerId: randomUUID(), controlToken: randomBytes(32).toString('hex'),
       accountId: account.id, guildId, channelId, mode,
       ...(directMessages ? { directMessages: true, ownerUserId: directMessageOwnerId } : {}),
-      model: model || await defaultModel(), reasoningEffort, codexCommand,
+      model: model || replyDefaults.model, reasoningEffort, serviceTier, codexCommand,
       batchWindowMs, cooldownMs, maxRepliesPerMinute, gifUrls,
     };
     try { await writeFile(paths.configuration, JSON.stringify(configuration), { flag: 'wx', mode: 0o600 }); }
@@ -130,7 +122,7 @@ export function createProactiveController(service, { entrypoint = process.env.DI
       await rm(paths.configuration);
       await writeFile(paths.configuration, JSON.stringify(configuration), { flag: 'wx', mode: 0o600 });
     }
-    await writeState(paths.status, { ...current, listenerId: configuration.listenerId, state: 'starting', running: false, accountId: account.id, guildId, channelId, model: configuration.model, ...(directMessages ? { directMessages: true, ownerUserId: directMessageOwnerId } : {}) });
+    await writeState(paths.status, { ...current, listenerId: configuration.listenerId, state: 'starting', running: false, accountId: account.id, guildId, channelId, model: configuration.model, reasoningEffort, serviceTier, ...(directMessages ? { directMessages: true, ownerUserId: directMessageOwnerId } : {}) });
     const log = openSync(paths.log, 'a', 0o600);
     let child;
     try {

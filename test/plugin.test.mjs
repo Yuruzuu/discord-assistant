@@ -59,6 +59,9 @@ test('installed plugin runs from an isolated folder without repository dependenc
     assert.equal(directMessages.annotations.readOnlyHint, false);
     assert.ok(!('userId' in directMessages.inputSchema.properties));
     assert.ok(!('ownerUserId' in directMessages.inputSchema.properties));
+    assert.equal(directMessages.inputSchema.properties.model.default, 'gpt-6.1-sol');
+    assert.equal(directMessages.inputSchema.properties.reasoningEffort.default, 'low');
+    assert.equal(directMessages.inputSchema.properties.serviceTier.default, 'priority');
   } finally {
     await client.close();
     await rm(temporary, { recursive: true, force: true });

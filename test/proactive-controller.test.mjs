@@ -68,7 +68,7 @@ server.listen(0, '127.0.0.1', async () => {
     assert.equal(rejected.status, 401);
     assert.equal((await controller.start({ guildId, channelId, model: 'fixture-model' })).alreadyRunning, true);
     assert.equal(launched, 1);
-    const directMessages = await controller.start({ directMessages: true, ownerUserId: '500000000000000001', model: 'fixture-model' });
+    const directMessages = await controller.start({ directMessages: true, ownerUserId: '500000000000000001' });
     assert.equal(directMessages.ownerUserId, directMessageOwnerId);
     assert.equal(recipient, directMessageOwnerId);
     assert.equal(directMessages.mode, 'all');
@@ -80,6 +80,10 @@ server.listen(0, '127.0.0.1', async () => {
     const directMessageSettings = JSON.parse(await readFile(directMessagePaths('reader', root).configuration, 'utf8'));
     assert.equal(directMessageSettings.ownerUserId, directMessageOwnerId);
     assert.equal(directMessageSettings.guildId, undefined);
+    assert.equal(directMessageSettings.model, 'gpt-6.1-sol');
+    assert.equal(directMessageSettings.reasoningEffort, 'low');
+    assert.equal(directMessageSettings.serviceTier, 'priority');
+    assert.equal(settings.model, 'fixture-model');
     assert.equal((await controller.stop({ directMessages: true })).running, false);
     assert.equal((await controller.status({ channelId })).running, true);
     const stopped = await controller.stop({ channelId });
