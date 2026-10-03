@@ -294,6 +294,9 @@ Each conversation has its own private `memory.md` under
 `XDG_DATA_HOME`). DM memories are not injected into server threads. You can edit
 the file directly; Nova reads the current contents before replying. New files
 start empty, and ordinary chat is never automatically saved.
+Unchanged notes reuse their snapshot and hash. File metadata checks still
+detect manual edits and atomic replacements; changed contents reload before the
+next reply. Consolidation skips replacement when the result is unchanged.
 
 Only owner `291140236979732480` can issue these text commands:
 

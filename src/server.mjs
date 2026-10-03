@@ -17,7 +17,7 @@ const messageFields = {
 
 export function createDiscordMcpServer(service) {
   const server = new McpServer(
-    { name: 'discord-readonly', version: '2.5.0' },
+    { name: 'discord-readonly', version: '2.5.1' },
     {
       instructions:
         'Discord bot access. Prefer discord_read for URLs and discord_reply for answering an existing message. Use discord_list_servers and discord_list_channels to resolve names, discord_user_info for profiles, and discord_list_expressions for custom emojis/stickers. Be playful and concise; use server emojis naturally and discord_send_messages for a few short conversational bubbles. Only send when requested or under an explicitly started proactive listener. Start proactive mode only when asked; stop it when asked.',
