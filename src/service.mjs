@@ -1,6 +1,7 @@
 import { DiscordApiClient, DiscordApiError } from './discord-api.mjs';
 import { assertSnowflake, parseDiscordUrl, snowflakeTimestamp } from './discord-url.mjs';
 import { CHANNEL_TYPES, imageReferences, shapeChannel, shapeMessage } from './shapes.mjs';
+import { mapConcurrent } from './concurrency.mjs';
 
 const THREAD_TYPES = new Set([10, 11, 12]);
 const THREAD_PARENT_TYPES = new Set([0, 5, 15, 16]);
@@ -30,7 +31,7 @@ function validateCursors({ before, after, around }) {
 }
 
 export class DiscordService {
-  constructor({ accounts, imageLimits, fetchImpl = globalThis.fetch, sleep, maxRetries } = {}) {
+  constructor({ accounts, imageLimits, fetchImpl = globalThis.fetch, sleep, maxRetries, requestConcurrency = 4, proactiveEntrypoint } = {}) {
     if (!Array.isArray(accounts) || accounts.length === 0) throw new Error('At least one Discord account is required');
     this.accounts = accounts.map((account) => ({
       ...account,
@@ -40,6 +41,7 @@ export class DiscordService {
         fetchImpl,
         sleep,
         maxRetries,
+        maxConcurrentRequests: requestConcurrency,
       }),
     }));
     this.imageLimits = imageLimits || {
@@ -48,13 +50,26 @@ export class DiscordService {
       maxTotalImageBytes: 20 * 1024 * 1024,
     };
     this.discovery = null;
+    this.discoveryRequest = null;
+    this.requestConcurrency = requestConcurrency;
+    this.proactiveEntrypoint = proactiveEntrypoint;
     this.guildAccounts = new Map();
     this.channelAccounts = new Map();
   }
 
   async discoverServers({ refresh = false } = {}) {
     if (this.discovery && !refresh) return this.discovery;
+    if (this.discoveryRequest) return this.discoveryRequest;
 
+    const request = this.refreshDiscovery().finally(() => {
+      this.discoveryRequest = null;
+    });
+    this.discoveryRequest = request;
+
+    return request;
+  }
+
+  async refreshDiscovery() {
     const results = await Promise.all(
       this.accounts.map(async (account) => {
         try {
@@ -98,7 +113,7 @@ export class DiscordService {
       }
     }
 
-    this.discovery = {
+    const discovery = {
       servers: [...servers.values()].sort((left, right) => left.name.localeCompare(right.name)),
       accounts: results.map((result) => ({
         accountId: result.accountId,
@@ -108,7 +123,9 @@ export class DiscordService {
       })),
       expectedMissing,
     };
-    return this.discovery;
+    this.discovery = results.some((result) => result.error) ? null : discovery;
+
+    return discovery;
   }
 
   accountById(accountId) {
@@ -118,6 +135,10 @@ export class DiscordService {
   }
 
   async accountForGuild(guildId) {
+    return (await this.resolveGuild(guildId)).account;
+  }
+
+  async resolveGuild(guildId) {
     assertSnowflake(guildId, 'guildId');
     await this.discoverServers();
     const preferredIds = this.guildAccounts.get(guildId) || [];
@@ -128,8 +149,8 @@ export class DiscordService {
     const failures = [];
     for (const account of candidates) {
       try {
-        await account.client.getGuild(guildId);
-        return account;
+        const guild = await account.client.getGuild(guildId);
+        return { account, guild };
       } catch (error) {
         failures.push(errorSummary(error));
       }
@@ -190,10 +211,9 @@ export class DiscordService {
     return this.discoverServers(options);
   }
 
-  async listChannels({ guildId, includeThreads = true, includeArchivedThreads = false, parentChannelIds = [], maxArchivedPerParent = 200 }) {
-    const account = await this.accountForGuild(guildId);
-    const [guild, baseChannels, active] = await Promise.all([
-      account.client.getGuild(guildId),
+  async listChannels({ guildId, includeThreads = true, includeArchivedThreads = false, parentChannelIds = [], maxArchivedPerParent = 200, archiveCategoryIds = [] }) {
+    const { account, guild } = await this.resolveGuild(guildId);
+    const [baseChannels, active] = await Promise.all([
       account.client.listGuildChannels(guildId),
       includeThreads ? account.client.listActiveGuildThreads(guildId) : Promise.resolve({ threads: [] }),
     ]);
@@ -202,33 +222,41 @@ export class DiscordService {
 
     if (includeArchivedThreads) {
       const requestedParents = new Set(parentChannelIds);
+      const requestedCategories = new Set(archiveCategoryIds);
       const parents = baseChannels.filter(
-        (channel) => THREAD_PARENT_TYPES.has(channel.type) && (requestedParents.size === 0 || requestedParents.has(channel.id)),
+        (channel) => THREAD_PARENT_TYPES.has(channel.type) &&
+          (requestedParents.size === 0 || requestedParents.has(channel.id)) &&
+          (requestedCategories.size === 0 || requestedCategories.has(channel.parent_id)),
       );
-      for (const parent of parents) {
+      const requests = parents.flatMap((parent) => {
         const archiveKinds = parent.type === 0 ? ['public', 'joined-private'] : ['public'];
-        for (const kind of archiveKinds) {
-          try {
-            const page = await account.client.listArchivedThreads(parent.id, {
+        return archiveKinds.map((kind) => ({ parent, kind }));
+      });
+      const results = await mapConcurrent(requests, this.requestConcurrency, async ({ parent, kind }) => {
+        try {
+          const page = await account.client.listArchivedThreads(parent.id, {
+            kind,
+            maxItems: maxArchivedPerParent,
+          });
+          return {
+            threads: page.threads,
+            warning: page.hasMore ? {
+              channelId: parent.id,
               kind,
-              maxItems: maxArchivedPerParent,
-            });
-            archived.push(...page.threads);
-            if (page.hasMore) {
-              warnings.push({
-                channelId: parent.id,
-                kind,
-                warning: `Archived thread results reached the ${maxArchivedPerParent}-item limit`,
-              });
-            }
-          } catch (error) {
-            if (error instanceof DiscordApiError && [403, 404].includes(error.status)) {
-              warnings.push({ channelId: parent.id, kind, error: errorSummary(error) });
-              continue;
-            }
-            throw error;
+              warning: `Archived thread results reached the ${maxArchivedPerParent}-item limit`,
+            } : null,
+          };
+        } catch (error) {
+          if (error instanceof DiscordApiError && [403, 404].includes(error.status)) {
+            return { threads: [], warning: { channelId: parent.id, kind, error: errorSummary(error) } };
           }
+
+          throw error;
         }
+      });
+      for (const result of results) {
+        archived.push(...result.threads);
+        if (result.warning) warnings.push(result.warning);
       }
     }
 
@@ -255,16 +283,6 @@ export class DiscordService {
     updatedAfter,
     limit = 200,
   }) {
-    const listing = await this.listChannels({
-      guildId,
-      includeThreads: true,
-      includeArchivedThreads: includeArchived,
-      parentChannelIds,
-      maxArchivedPerParent: Math.min(Math.max(limit, 1), 500),
-    });
-    const byId = new Map(listing.channels.map((channel) => [channel.id, channel]));
-    const parentIds = new Set(parentChannelIds);
-    const categories = new Set(categoryIds);
     let pattern;
     if (namePattern) {
       try {
@@ -275,6 +293,18 @@ export class DiscordService {
     }
     const updatedAfterMs = updatedAfter ? Date.parse(updatedAfter) : null;
     if (updatedAfter && !Number.isFinite(updatedAfterMs)) throw new Error('updatedAfter must be an ISO-8601 date');
+
+    const listing = await this.listChannels({
+      guildId,
+      includeThreads: true,
+      includeArchivedThreads: includeArchived,
+      parentChannelIds,
+      archiveCategoryIds: categoryIds,
+      maxArchivedPerParent: Math.min(Math.max(limit, 1), 500),
+    });
+    const byId = new Map(listing.channels.map((channel) => [channel.id, channel]));
+    const parentIds = new Set(parentChannelIds);
+    const categories = new Set(categoryIds);
 
     const tickets = listing.channels.filter((channel) => {
       const parent = channel.parentId ? byId.get(channel.parentId) : null;
@@ -317,6 +347,7 @@ export class DiscordService {
   async imageContent(account, messages, maxImages) {
     const content = [];
     const warnings = [];
+    const fetchedImages = new Map();
     let totalBytes = 0;
     const cap = Math.min(maxImages || this.imageLimits.maxImagesPerCall, this.imageLimits.maxImagesPerCall);
 
@@ -324,12 +355,10 @@ export class DiscordService {
       for (const reference of imageReferences(message)) {
         if (content.length >= cap) break outer;
         try {
-          const image = await account.client.fetchImage(reference.url, {
-            maxBytes: Math.min(
-              this.imageLimits.maxBytesPerImage,
-              this.imageLimits.maxTotalImageBytes - totalBytes,
-            ),
-          });
+          const maxBytes = Math.min(this.imageLimits.maxBytesPerImage, this.imageLimits.maxTotalImageBytes - totalBytes);
+          const image = fetchedImages.get(reference.url) || await account.client.fetchImage(reference.url, { maxBytes });
+          if (image.size > maxBytes) throw new Error(`Attachment exceeds the ${maxBytes}-byte image limit`);
+          fetchedImages.set(reference.url, image);
           totalBytes += image.size;
           content.push({
             type: 'image',
@@ -444,8 +473,7 @@ export class DiscordService {
   async checkAccess({ guildId, channelId, messageId }) {
     if (!guildId && !channelId) throw new Error('Provide guildId or channelId');
     if (messageId && !channelId) throw new Error('messageId requires channelId');
-    const checks = [];
-    for (const account of this.accounts) {
+    const checks = await mapConcurrent(this.accounts, this.requestConcurrency, async (account) => {
       const result = { accountId: account.id, guild: null, channel: null, message: null, error: null };
       try {
         if (guildId) result.guild = { ok: true, value: await account.client.getGuild(guildId) };
@@ -454,8 +482,8 @@ export class DiscordService {
       } catch (error) {
         result.error = errorSummary(error);
       }
-      checks.push(result);
-    }
+      return result;
+    });
     return { checks };
   }
 

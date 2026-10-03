@@ -1,0 +1,23 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "discord",
+  "version": "2.1.0",
+  "description": "Read Discord messages and profiles, send native replies and playful message batches, and start on-demand proactive channel conversations.",
+  "author": { "name": "Yuruzuu" },
+  "repository": "https://github.com/Yuruzuu/discord-mcp",
+  "license": "MIT",
+  "keywords": ["discord", "messages", "tickets", "emojis", "stickers"],
+  "extensions": {
+    "com.openai": {
+      "interface": {
+        "displayName": "Discord",
+        "shortDescription": "Read server messages and send bot replies.",
+        "longDescription": "Connect your Discord bot to read channels, tickets, profiles and images; send native replies with custom emojis, stickers and GIFs; and start an on-demand channel listener powered by Codex.",
+        "developerName": "Yuruzuu",
+        "category": "Productivity",
+        "capabilities": ["Read", "Write"],
+        "brandColor": "#5865F2"
+      }
+    }
+  }
+}

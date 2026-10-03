@@ -62,6 +62,30 @@ function shapeEmbed(embed) {
   };
 }
 
+export function shapeEmoji(emoji) {
+  return {
+    id: emoji.id,
+    name: emoji.name || null,
+    animated: Boolean(emoji.animated),
+    available: emoji.available ?? true,
+    roleIds: emoji.roles || [],
+    markup: emoji.name && emoji.id ? `<${emoji.animated ? 'a' : ''}:${emoji.name}:${emoji.id}>` : null,
+    imageUrl: emoji.id ? `https://cdn.discordapp.com/emojis/${emoji.id}.${emoji.animated ? 'gif' : 'png'}?size=128` : null,
+  };
+}
+
+export function shapeSticker(sticker) {
+  return {
+    id: sticker.id,
+    guildId: sticker.guild_id || null,
+    name: sticker.name || null,
+    description: sticker.description || null,
+    tags: sticker.tags || null,
+    formatType: sticker.format_type ?? null,
+    available: sticker.available ?? true,
+  };
+}
+
 export function shapeMessage(message) {
   const author = message.author || {};
   const guildId = message.guild_id || null;
@@ -81,6 +105,7 @@ export function shapeMessage(message) {
     content: message.content || '',
     attachments: (message.attachments || []).map(shapeAttachment),
     embeds: (message.embeds || []).map(shapeEmbed),
+    ...(message.sticker_items?.length ? { stickers: message.sticker_items.map(shapeSticker) } : {}),
   };
 }
 

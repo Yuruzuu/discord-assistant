@@ -1,6 +1,13 @@
+import { createConcurrencyLimit } from './concurrency.mjs';
+
 const API_BASE = 'https://discord.com/api/v10';
 const USER_AGENT = 'discord-readonly-mcp/2.0 (+https://github.com/Vorakorn1001/discord-readonly-mcp)';
 const IMAGE_MIME_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif']);
+const RETRYABLE_CONNECTION_CODES = new Set([
+  'FETCH_FAILED', 'EAI_AGAIN', 'ENOTFOUND', 'ECONNRESET', 'ECONNREFUSED',
+  'ETIMEDOUT', 'EHOSTUNREACH', 'ENETUNREACH', 'EPIPE',
+  'UND_ERR_CONNECT_TIMEOUT', 'UND_ERR_HEADERS_TIMEOUT', 'UND_ERR_BODY_TIMEOUT', 'UND_ERR_SOCKET',
+]);
 
 function wait(milliseconds) {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
@@ -22,6 +29,42 @@ function parseJson(text) {
   } catch {
     return text;
   }
+}
+
+function requestRoute(path) {
+  const parts = path.split('?')[0].split('/');
+  const major = ['channels', 'guilds'].includes(parts[1]) ? `${parts[1]}/${parts[2]}` : '';
+  const route = parts.map((part, index) => /^\d+$/.test(part) && !(major && index === 2) ? ':id' : part).join('/');
+
+  return { route, major };
+}
+
+function secondsToMilliseconds(value) {
+  if (value == null || value === '') return null;
+  const seconds = Number(value);
+
+  return Number.isFinite(seconds) && seconds >= 0 ? Math.ceil(seconds * 1000) : null;
+}
+
+function connectionErrorCode(error) {
+  const causes = [error, error?.cause, ...(error?.cause?.errors || [])];
+  const code = causes.find((cause) => typeof cause?.code === 'string')?.code;
+  if (code) return code;
+  if (error?.name === 'TimeoutError') return 'REQUEST_TIMEOUT';
+  if (error?.name === 'AbortError') return 'ABORT_ERR';
+
+  return error instanceof TypeError && error.message === 'fetch failed' ? 'FETCH_FAILED' : null;
+}
+
+function connectionErrorMessage(code) {
+  if (['ENOTFOUND', 'EAI_AGAIN'].includes(code)) return `Discord DNS lookup failed (${code}). Check the MCP server's network connection.`;
+  if (['EPERM', 'EACCES'].includes(code)) return `The execution environment blocked Discord network access (${code}).`;
+  if (['REQUEST_TIMEOUT', 'ETIMEDOUT', 'UND_ERR_CONNECT_TIMEOUT', 'UND_ERR_HEADERS_TIMEOUT', 'UND_ERR_BODY_TIMEOUT'].includes(code)) {
+    return `Discord request timed out (${code}).`;
+  }
+  if (code.includes('CERT') || code.startsWith('UNABLE_TO_VERIFY')) return `Discord TLS certificate verification failed (${code}).`;
+
+  return `Discord connection failed (${code}).`;
 }
 
 function detectImageMime(buffer) {
@@ -48,7 +91,7 @@ export class DiscordApiError extends Error {
 }
 
 export class DiscordApiClient {
-  constructor({ accountId, token, fetchImpl = globalThis.fetch, sleep = wait, maxRetries = 3, requestTimeoutMs = 30_000 }) {
+  constructor({ accountId, token, fetchImpl = globalThis.fetch, sleep = wait, maxRetries = 3, requestTimeoutMs = 30_000, maxConcurrentRequests = 4, now = Date.now }) {
     if (typeof fetchImpl !== 'function') throw new Error('A fetch implementation is required');
     this.accountId = accountId;
     this.token = token;
@@ -56,26 +99,128 @@ export class DiscordApiClient {
     this.sleep = sleep;
     this.maxRetries = maxRetries;
     this.requestTimeoutMs = requestTimeoutMs;
+    this.now = now;
+    this.runRequest = createConcurrencyLimit(maxConcurrentRequests);
+    this.pendingRequests = new Map();
+    this.pendingImages = new Map();
+    this.routeRequests = new Map();
+    this.routeBuckets = new Map();
+    this.rateLimitResets = new Map();
+    this.globalResetAt = 0;
   }
 
   async get(path) {
+    const existing = this.pendingRequests.get(path);
+    if (existing) return existing;
+
+    const request = this.scheduleRequest('GET', path).finally(() => {
+      this.pendingRequests.delete(path);
+    });
+    this.pendingRequests.set(path, request);
+
+    return request;
+  }
+
+  post(path, payload, options) {
+    return this.scheduleRequest('POST', path, payload, options);
+  }
+
+  scheduleRequest(method, path, payload, options) {
     if (!path.startsWith('/')) throw new Error('Discord API paths must start with /');
+    const { route, major } = requestRoute(path);
+    const methodRoute = `${method} ${route}`;
+    const queueKey = this.routeBuckets.get(methodRoute) || methodRoute;
+    const previous = this.routeRequests.get(queueKey) || Promise.resolve();
+    const request = previous.catch(() => {}).then(() => this.requestJson(path, methodRoute, major, method, payload, options)).finally(() => {
+      if (this.routeRequests.get(queueKey) === request) this.routeRequests.delete(queueKey);
+    });
+    this.routeRequests.set(queueKey, request);
+
+    return request;
+  }
+
+  async waitForRateLimit(route) {
+    while (true) {
+      const key = this.routeBuckets.get(route) || route;
+      const resetAt = this.rateLimitResets.get(key) || 0;
+      const remaining = Math.max(this.globalResetAt, resetAt) - this.now();
+      if (remaining <= 0) {
+        this.rateLimitResets.delete(key);
+        return;
+      }
+      await this.sleep(remaining);
+    }
+  }
+
+  recordRateLimit(route, major, response, body) {
+    const bucket = response.headers.get('x-ratelimit-bucket');
+    if (bucket) this.routeBuckets.set(route, `${bucket}:${major}`);
+    const key = this.routeBuckets.get(route) || route;
+    const resetAfter = secondsToMilliseconds(response.headers.get('x-ratelimit-reset-after'));
+    if (response.headers.get('x-ratelimit-remaining') === '0' && resetAfter != null) {
+      this.rateLimitResets.set(key, Math.max(this.rateLimitResets.get(key) || 0, this.now() + resetAfter));
+    }
+    if (response.status !== 429) return false;
+
+    const bodyDelay = secondsToMilliseconds(body?.retry_after);
+    const headerDelay = secondsToMilliseconds(response.headers.get('retry-after'));
+    const retryDelay = Math.max(bodyDelay ?? resetAfter ?? 0, headerDelay ?? 0, 50);
+    const resetAt = this.now() + retryDelay;
+    if (body?.global === true || response.headers.get('x-ratelimit-global') === 'true' || response.headers.get('x-ratelimit-scope') === 'global') {
+      this.globalResetAt = Math.max(this.globalResetAt, resetAt);
+    } else {
+      this.rateLimitResets.set(key, Math.max(this.rateLimitResets.get(key) || 0, resetAt));
+    }
+
+    return bodyDelay != null || headerDelay != null || resetAfter != null;
+  }
+
+  async requestJson(path, route, major, method, payload, { signal } = {}) {
     for (let attempt = 0; attempt <= this.maxRetries; attempt += 1) {
-      const response = await this.fetch(`${API_BASE}${path}`, {
-        method: 'GET',
-        headers: { Authorization: `Bot ${this.token}`, 'User-Agent': USER_AGENT },
-        signal: AbortSignal.timeout(this.requestTimeoutMs),
-      });
-      const text = await response.text();
-      const body = parseJson(text);
+      await this.waitForRateLimit(route);
+      signal?.throwIfAborted();
+      let result;
+      try {
+        result = await this.runRequest(async () => {
+          await this.waitForRateLimit(route);
+          signal?.throwIfAborted();
+          const response = await this.fetch(`${API_BASE}${path}`, {
+            method,
+            headers: {
+              Authorization: `Bot ${this.token}`,
+              'User-Agent': USER_AGENT,
+              ...(payload === undefined ? {} : { 'Content-Type': 'application/json' }),
+            },
+            ...(payload === undefined ? {} : { body: JSON.stringify(payload) }),
+            signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(this.requestTimeoutMs)]) : AbortSignal.timeout(this.requestTimeoutMs),
+          });
+          const body = parseJson(await response.text());
+          const retryable = this.recordRateLimit(route, major, response, body);
+
+          return { response, body, retryable };
+        });
+      } catch (error) {
+        const code = connectionErrorCode(error);
+        if (!code) throw error;
+        if (method === 'GET' && attempt < this.maxRetries && RETRYABLE_CONNECTION_CODES.has(code)) {
+          await this.sleep(250 * 2 ** attempt);
+          continue;
+        }
+
+        const failure = new DiscordApiError(connectionErrorMessage(code), {
+          code,
+          path: path.split('?')[0],
+          accountId: this.accountId,
+        });
+        failure.cause = error;
+        throw failure;
+      }
+
+      const { response, body, retryable } = result;
 
       if (response.ok) return body;
-      const retryAfter = Number(body?.retry_after);
-      if (response.status === 429 && attempt < this.maxRetries && Number.isFinite(retryAfter)) {
-        await this.sleep(Math.min(Math.max(retryAfter * 1000, 50), 30_000));
-        continue;
-      }
-      if (response.status >= 500 && attempt < this.maxRetries) {
+      if (response.status === 429 && attempt < this.maxRetries && retryable) continue;
+      if (method === 'GET' && response.status >= 500 && attempt < this.maxRetries) {
         await this.sleep(250 * 2 ** attempt);
         continue;
       }
@@ -96,6 +241,18 @@ export class DiscordApiClient {
 
   getCurrentUser() {
     return this.get('/users/@me');
+  }
+
+  getUser(userId) {
+    return this.get(`/users/${userId}`);
+  }
+
+  getGuildMember(guildId, userId) {
+    return this.get(`/guilds/${guildId}/members/${userId}`);
+  }
+
+  listGuildRoles(guildId) {
+    return this.get(`/guilds/${guildId}/roles`);
   }
 
   async listGuilds() {
@@ -120,6 +277,14 @@ export class DiscordApiClient {
     return this.get(`/guilds/${guildId}/channels`);
   }
 
+  listGuildEmojis(guildId) {
+    return this.get(`/guilds/${guildId}/emojis`);
+  }
+
+  listGuildStickers(guildId) {
+    return this.get(`/guilds/${guildId}/stickers`);
+  }
+
   listActiveGuildThreads(guildId) {
     return this.get(`/guilds/${guildId}/threads/active`);
   }
@@ -130,6 +295,10 @@ export class DiscordApiClient {
 
   getMessage(channelId, messageId) {
     return this.get(`/channels/${channelId}/messages/${messageId}`);
+  }
+
+  sendMessage(channelId, payload, options) {
+    return this.post(`/channels/${channelId}/messages`, payload, options);
   }
 
   listMessages(channelId, { limit = 50, before, after, around } = {}) {
@@ -164,6 +333,19 @@ export class DiscordApiClient {
   }
 
   async fetchImage(url, { maxBytes }) {
+    const key = `${maxBytes}:${url}`;
+    const existing = this.pendingImages.get(key);
+    if (existing) return existing;
+
+    const request = this.runRequest(() => this.requestImage(url, { maxBytes })).finally(() => {
+      this.pendingImages.delete(key);
+    });
+    this.pendingImages.set(key, request);
+
+    return request;
+  }
+
+  async requestImage(url, { maxBytes }) {
     let current;
     try {
       current = new URL(url);
@@ -181,43 +363,52 @@ export class DiscordApiClient {
         headers: { 'User-Agent': USER_AGENT },
         signal: AbortSignal.timeout(this.requestTimeoutMs),
       });
-      if (response.status >= 300 && response.status < 400) {
-        const location = response.headers.get('location');
-        if (!location || redirect === 3) throw new Error('Discord attachment redirected too many times');
-        current = new URL(location, current);
-        continue;
-      }
-      if (!response.ok) throw new Error(`Discord attachment returned HTTP ${response.status}`);
+      let reader;
+      try {
+        if (response.status >= 300 && response.status < 400) {
+          const location = response.headers.get('location');
+          if (!location || redirect === 3) throw new Error('Discord attachment redirected too many times');
+          current = new URL(location, current);
+          continue;
+        }
+        if (!response.ok) throw new Error(`Discord attachment returned HTTP ${response.status}`);
 
-      const mimeType = response.headers.get('content-type')?.split(';')[0]?.trim().toLowerCase();
-      if (!IMAGE_MIME_TYPES.has(mimeType)) {
-        throw new Error(`Unsupported attachment MIME type: ${mimeType || 'unknown'}`);
-      }
-      const contentLength = Number(response.headers.get('content-length'));
-      if (Number.isFinite(contentLength) && contentLength > maxBytes) {
-        throw new Error(`Attachment exceeds the ${maxBytes}-byte image limit`);
-      }
-
-      const chunks = [];
-      let size = 0;
-      const reader = response.body?.getReader();
-      if (!reader) throw new Error('Attachment response has no readable body');
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        size += value.byteLength;
-        if (size > maxBytes) {
-          await reader.cancel();
+        const mimeType = response.headers.get('content-type')?.split(';')[0]?.trim().toLowerCase();
+        if (!IMAGE_MIME_TYPES.has(mimeType)) {
+          throw new Error(`Unsupported attachment MIME type: ${mimeType || 'unknown'}`);
+        }
+        const contentLength = Number(response.headers.get('content-length'));
+        if (Number.isFinite(contentLength) && contentLength > maxBytes) {
           throw new Error(`Attachment exceeds the ${maxBytes}-byte image limit`);
         }
-        chunks.push(value);
+
+        const chunks = [];
+        let size = 0;
+        reader = response.body?.getReader();
+        if (!reader) throw new Error('Attachment response has no readable body');
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          size += value.byteLength;
+          if (size > maxBytes) {
+            throw new Error(`Attachment exceeds the ${maxBytes}-byte image limit`);
+          }
+          chunks.push(value);
+        }
+        const buffer = Buffer.concat(chunks);
+        const detectedMimeType = detectImageMime(buffer);
+        if (!detectedMimeType || detectedMimeType !== mimeType) {
+          throw new Error(`Attachment bytes do not match declared MIME type ${mimeType}`);
+        }
+        return { data: buffer.toString('base64'), mimeType, size };
+      } finally {
+        if (reader) {
+          await reader.cancel().catch(() => {});
+          reader.releaseLock();
+        } else if (response.body) {
+          await response.body.cancel().catch(() => {});
+        }
       }
-      const buffer = Buffer.concat(chunks);
-      const detectedMimeType = detectImageMime(buffer);
-      if (!detectedMimeType || detectedMimeType !== mimeType) {
-        throw new Error(`Attachment bytes do not match declared MIME type ${mimeType}`);
-      }
-      return { data: buffer.toString('base64'), mimeType, size };
     }
     throw new Error('Unable to fetch Discord attachment');
   }

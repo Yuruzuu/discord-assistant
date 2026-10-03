@@ -44,11 +44,16 @@ test('paginates all visible guilds', async () => {
 
 test('respects Discord retry_after on rate limits', async () => {
   let calls = 0;
+  let now = 0;
   const waits = [];
   const client = new DiscordApiClient({
     accountId: 'reader',
     token: 'token',
-    sleep: async (milliseconds) => waits.push(milliseconds),
+    now: () => now,
+    sleep: async (milliseconds) => {
+      waits.push(milliseconds);
+      now += milliseconds;
+    },
     fetchImpl: async () => {
       calls += 1;
       return calls === 1 ? jsonResponse({ retry_after: 0.01 }, 429) : jsonResponse({ ok: true });

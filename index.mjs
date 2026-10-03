@@ -2,10 +2,14 @@
 import { loadConfig } from './src/config.mjs';
 import { runStdioServer } from './src/server.mjs';
 import { DiscordService } from './src/service.mjs';
+import { fileURLToPath } from 'node:url';
 
 async function main() {
   const config = loadConfig();
-  const service = new DiscordService(config);
+  const service = new DiscordService({
+    ...config,
+    proactiveEntrypoint: process.env.DISCORD_PROACTIVE_ENTRYPOINT || fileURLToPath(new URL('./src/proactive/daemon.mjs', import.meta.url)),
+  });
   await runStdioServer(service);
   process.stderr.write(`[discord-readonly] v2 started with ${config.accounts.length} account(s)\n`);
 }

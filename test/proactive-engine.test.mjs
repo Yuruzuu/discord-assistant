@@ -1,0 +1,138 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import { setTimeout } from 'node:timers/promises';
+import { createProactiveEngine } from '../src/proactive/engine.mjs';
+
+const guildId = '100000000000000001';
+const channelId = '200000000000000001';
+const botUserId = '300000000000000001';
+let nextMessage = 400000000000000001n;
+
+function message(properties = {}) {
+  return { id: String(nextMessage++), guild_id: guildId, channel_id: channelId, author: { id: '500000000000000001', bot: false }, content: 'hello', mentions: [], ...properties };
+}
+
+function fixture(options = {}) {
+  const generations = [];
+  const sends = [];
+  let referenceChecks = 0;
+  const engine = createProactiveEngine({
+    botUserId, guildId, channelId, batchWindowMs: 5, cooldownMs: 0,
+    resolveReplyAuthor: async () => { referenceChecks += 1; return botUserId; },
+    getContext: async () => ({ recentMessages: [] }),
+    generateReply: async (context) => { generations.push(context); return { shouldReply: true, messages: [{ content: 'hey!' }] }; },
+    sendReplies: async (messages, trigger) => { sends.push({ messages, trigger }); return { sentMessages: messages }; },
+    ...options,
+  });
+
+  return { engine, generations, sends, referenceChecks: () => referenceChecks };
+}
+
+async function until(condition) {
+  for (let attempt = 0; attempt < 200 && !condition(); attempt += 1) await setTimeout(5);
+  assert.ok(condition(), 'Expected engine state did not arrive');
+}
+
+test('mentions trigger a reply, while other channels and bot messages are ignored', async () => {
+  const { engine, sends, referenceChecks } = fixture();
+  try {
+    assert.equal(await engine.receive(message({ channel_id: '200000000000000002', content: `<@${botUserId}> hey` })), false);
+    assert.equal(await engine.receive(message({ author: { id: botUserId, bot: true }, content: `<@${botUserId}>` })), false);
+    assert.equal(await engine.receive(message({ content: 'normal chatter' })), false);
+    assert.equal(await engine.receive(message({ content: `<@${botUserId}> how are you?` })), true);
+    await until(() => sends.length === 1);
+    assert.equal(referenceChecks(), 0);
+  } finally { engine.stop(); }
+});
+
+test('native replies to the bot trigger responses without a new mention', async () => {
+  const { engine, sends, referenceChecks } = fixture();
+  try {
+    await engine.receive(message({ message_reference: { message_id: '600000000000000001' } }));
+    await until(() => sends.length === 1);
+    assert.equal(referenceChecks(), 1);
+  } finally { engine.stop(); }
+});
+
+test('human message bubbles are batched and the latest message is the reply target', async () => {
+  const { engine, generations, sends } = fixture({ batchWindowMs: 20 });
+  try {
+    const first = message({ content: `<@${botUserId}> I have a question` });
+    const second = message({ content: 'how does this work?' });
+    await engine.receive(first);
+    await engine.receive(second);
+    await until(() => sends.length === 1);
+    assert.deepEqual(generations[0].triggerMessages.map((message) => message.id), [first.id, second.id]);
+    assert.equal(sends[0].trigger.id, second.id);
+  } finally { engine.stop(); }
+});
+
+test('replayed Gateway messages are not answered twice', async () => {
+  const { engine, sends } = fixture();
+  try {
+    const incoming = message({ mentions: [{ id: botUserId }] });
+    await engine.receive(incoming);
+    await until(() => sends.length === 1);
+    assert.equal(await engine.receive(incoming), false);
+    await setTimeout(10);
+    assert.equal(sends.length, 1);
+  } finally { engine.stop(); }
+});
+
+test('questions and all-message modes use their selected trigger policy', async () => {
+  for (const mode of ['questions', 'all']) {
+    const { engine, sends } = fixture({ mode });
+    try {
+      if (mode === 'questions') assert.equal(await engine.receive(message({ content: 'just chatting' })), false);
+      await engine.receive(message({ content: mode === 'questions' ? 'Can you explain this?' : 'just chatting' }));
+      await until(() => sends.length === 1);
+    } finally { engine.stop(); }
+  }
+});
+
+test('stopping clears pending batches before they generate a reply', async () => {
+  const { engine, generations, sends } = fixture({ batchWindowMs: 20 });
+  await engine.receive(message({ mentions: [{ id: botUserId }] }));
+  engine.stop();
+  await setTimeout(30);
+  assert.equal(generations.length, 0);
+  assert.equal(sends.length, 0);
+  assert.equal(engine.status().queued, 0);
+});
+
+test('stopping cancels an active generation and prevents sending', async () => {
+  let started = false;
+  const { engine, sends } = fixture({
+    generateReply: (_, signal) => new Promise((resolve, reject) => {
+      started = true;
+      signal.addEventListener('abort', () => reject(new DOMException('Stopped', 'AbortError')), { once: true });
+    }),
+  });
+  await engine.receive(message({ mentions: [{ id: botUserId }] }));
+  await until(() => started);
+  engine.stop();
+  await until(() => !engine.status().generating);
+  assert.equal(sends.length, 0);
+});
+
+test('generation failures release the queue and obey cooldown before another attempt', async () => {
+  let current = 0;
+  let calls = 0;
+  const waits = [];
+  const { engine, sends } = fixture({
+    cooldownMs: 100,
+    now: () => current,
+    sleep: async (delay) => { waits.push(delay); current += delay; },
+    generateReply: async () => {
+      if (++calls === 1) throw new Error('Provider unavailable');
+      return { shouldReply: true, messages: [{ content: 'back!' }] };
+    },
+  });
+  try {
+    await engine.receive(message({ mentions: [{ id: botUserId }] }));
+    await until(() => engine.status().errors === 1);
+    await engine.receive(message({ mentions: [{ id: botUserId }], author: { id: '500000000000000002' } }));
+    await until(() => sends.length === 1);
+    assert.deepEqual(waits, [100]);
+  } finally { engine.stop(); }
+});

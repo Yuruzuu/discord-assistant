@@ -20,7 +20,9 @@ test('serves the v2 and compatibility tools over MCP stdio', async () => {
     assert.ok(names.includes('discord_read'));
     assert.ok(names.includes('discord_fetch_attachment'));
     assert.ok(names.includes('discord_get_message'));
-    assert.ok(result.tools.every((tool) => tool.annotations?.readOnlyHint === true));
+    assert.ok(names.includes('discord_list_expressions'));
+    assert.ok(names.includes('discord_send_message'));
+    assert.deepEqual(result.tools.filter((tool) => tool.annotations?.readOnlyHint === false).map((tool) => tool.name), ['discord_send_message', 'discord_reply', 'discord_send_messages', 'discord_start_proactive', 'discord_stop_proactive']);
   } finally {
     await client.close();
   }
