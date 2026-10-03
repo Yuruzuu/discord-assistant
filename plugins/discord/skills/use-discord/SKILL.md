@@ -73,8 +73,17 @@ bot, not the user's personal account. Personal DMs with other people are not ava
   its selected mode until the listener is stopped; it does not authorize actions
   elsewhere or grant channel participants control of this plugin's settings.
 - The default `mentions` mode answers direct bot mentions and native replies
-  to the bot. `questions` also considers channel questions; `all` considers every
-  human message. Use broader modes only when requested.
+  to the bot. `questions` also considers owner questions; `all` considers every
+  owner message. Use broader modes only when requested.
+- Every automatic mode accepts only owner `291140236979732480`. Other users'
+  messages and pings do not authorize replies or model generation.
+- Use `discord_start_server_mentions` when the owner opts into every server and
+  accessible channel. No channel selection is needed. It watches owner mentions
+  and native replies, creates conversations lazily and keeps their history and
+  memory separate. Stop selected-channel listeners first to avoid overlap.
+- Use `discord_server_mentions_status` and `discord_stop_server_mentions` to
+  inspect or stop server-wide watching. It shares the model limits across
+  channels and retains a bounded cache of idle conversation runtimes.
 - The background listener uses the user's logged-in Codex CLI and quota. It
   listens through the Discord Gateway, so the bot appears online while active.
   It does not auto-start with Codex or the operating system.

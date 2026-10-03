@@ -106,6 +106,9 @@ that file; `tokenEnv` is an environment variable name, not a token.
 | `discord_start_direct_messages` | Start private DM conversations for the fixed owner only. |
 | `discord_stop_direct_messages` | Stop DM replies independently of server listeners. |
 | `discord_direct_message_status` | Inspect the DM listener, owner ID and reply statistics. |
+| `discord_start_server_mentions` | Opt in to owner mentions/replies across all accessible server channels. |
+| `discord_stop_server_mentions` | Stop server-wide watching independently of DMs. |
+| `discord_server_mentions_status` | Inspect server coverage and per-conversation statistics. |
 | `discord_fetch_attachment` | Fetch one selected image from a message or a direct Discord CDN/media URL. |
 | `discord_check_access` | Diagnose which configured bot can read a guild, channel, or message. |
 | `discord_list_expressions` | List custom emojis and stickers, with ready-to-use emoji markup, sticker IDs, availability, and role restrictions. |
@@ -204,9 +207,12 @@ Start the listener only when you want the bot to participate in a channel:
 Call `discord_start_proactive` with those arguments. It checks Codex CLI
 availability and login, starts a detached local server, and reports running state
 after the Gateway is ready. No startup greeting is posted. `mentions` responds
-to direct bot mentions and native replies to the bot. `questions` also considers
-channel questions; `all` considers every human message. Messages from bots and
+to owner bot mentions and native replies to the bot. `questions` also considers
+owner questions; `all` considers every owner message. Messages from bots and
 webhooks are ignored, and repeated Gateway messages are deduplicated.
+Automatic responses in every mode are restricted to owner
+`291140236979732480`. Other users are rejected at both the Gateway and engine
+before lookups, typing, context loading or model generation.
 
 The bot appears online while its Gateway listener is active. Enable **Message
 Content Intent**, **View Channel**, **Read Message History**, and the relevant
@@ -263,6 +269,30 @@ active listener's configuration. `accountId` selects a specific configured bot.
 Bursty statistics updates share a status-file write within a 250 ms window.
 Lifecycle changes flush immediately, and live status requests use the current
 in-memory state.
+
+## Owner mentions across all servers
+
+Call `discord_start_server_mentions` to explicitly enable watching all servers
+the bot belongs to. No server or channel ID is needed. One Gateway connection
+receives events from accessible channels and threads, including new channels
+and servers joined while running. Discord channel permissions and private-thread
+membership still determine visibility.
+
+Only owner `291140236979732480` can trigger a response, by mentioning Nova or
+replying natively to one of its messages. Ordinary chatter and other users'
+pings do not create workers or use Codex quota. Conversation runtimes are created
+lazily, with separate ephemeral threads and `memory.md` files per channel.
+
+Server conversations share a single reply scheduler, the configured cooldown,
+and the model-attempt limit (six per minute by default). Up to eight idle
+conversation runtimes are retained; older idle runtimes close as needed, while
+active/queued work is kept. Approved memory survives eviction.
+
+Stop channel-specific listeners before enabling server-wide watching to prevent
+duplicate replies. The controller rejects overlapping scopes, including
+concurrent starts. `discord_server_mentions_status` reports `watchedGuildCount`
+and per-channel statistics. `discord_stop_server_mentions` stops this mode;
+owner DMs continue independently. This mode does not auto-start after a restart.
 
 ## Private owner DMs
 
