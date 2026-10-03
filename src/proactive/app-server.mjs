@@ -11,6 +11,8 @@ export function createAppServer({ command, cwd, env, spawnImpl = spawn, onNotifi
   const pending = new Map();
   let nextId = 0;
   let closed = false;
+  let exited = false;
+  let closing;
   let diagnostics = '';
   const lines = createInterface({ input: child.stdout });
 
@@ -28,6 +30,7 @@ export function createAppServer({ command, cwd, env, spawnImpl = spawn, onNotifi
   }
 
   lines.on('line', (line) => {
+    if (closed) return;
     let message;
     try { message = JSON.parse(line); } catch { return; }
     if (message.method) {
@@ -51,6 +54,7 @@ export function createAppServer({ command, cwd, env, spawnImpl = spawn, onNotifi
   child.on('error', fail);
   child.stdin.on('error', fail);
   child.on('close', (code) => {
+    exited = true;
     const detail = diagnostics.split('\n').filter((line) => /^(?:ERROR|error:)/.test(line)).at(-1)?.slice(0, 200);
     fail(new Error(`Codex conversation worker exited (${code})${detail ? `: ${detail}` : ''}`));
   });
@@ -66,15 +70,17 @@ export function createAppServer({ command, cwd, env, spawnImpl = spawn, onNotifi
     });
   }
 
-  async function close() {
+  function close() {
+    if (closing) return closing;
     fail(new Error('Codex conversation worker stopped'));
     lines.close();
-    child.kill('SIGTERM');
-    await new Promise((resolve) => {
+    if (exited) return closing = Promise.resolve();
+    closing = new Promise((resolve) => {
       const timer = setTimeout(() => { child.kill('SIGKILL'); resolve(); }, 1000);
       child.once('close', () => { clearTimeout(timer); resolve(); });
-      if (child.exitCode !== null && child.exitCode !== undefined) { clearTimeout(timer); resolve(); }
+      child.kill('SIGTERM');
     });
+    return closing;
   }
 
   return { request, notify: (method, params) => send({ jsonrpc: '2.0', method, params }), close, isClosed: () => closed };

@@ -1,15 +1,17 @@
 import { EventEmitter } from 'node:events';
 import { PassThrough, Writable } from 'node:stream';
 
-export function fakeCodexServer({ plans, hang = false, tools = {}, delayMs = 5 } = {}) {
+export function fakeCodexServer({ plans, hang = false, tools = {}, delayMs = 5, closeDelayMs = 0 } = {}) {
   const requests = [];
   const launches = [];
+  const children = [];
   let startedThreads = 0;
   let completedTurns = 0;
   const defaultMessage = { content: 'hey!', gifUrl: null, stickerIds: [] };
   const spawnImpl = (command, args, options) => {
     launches.push({ command, args, options });
     const child = new EventEmitter();
+    children.push(child);
     child.stdout = new PassThrough(); child.stderr = new PassThrough();
     child.exitCode = null;
     let stopped = false;
@@ -51,9 +53,16 @@ export function fakeCodexServer({ plans, hang = false, tools = {}, delayMs = 5 }
       }
       callback();
     } });
-    child.kill = () => { if (stopped) return true; stopped = true; for (const timer of timers) clearTimeout(timer); child.exitCode = 0; queueMicrotask(() => child.emit('close', 0)); return true; };
+    child.kill = () => {
+      if (stopped) return true;
+      stopped = true;
+      for (const timer of timers) clearTimeout(timer);
+      const finish = () => { child.exitCode = 0; child.emit('close', 0); };
+      if (closeDelayMs) setTimeout(finish, closeDelayMs); else queueMicrotask(finish);
+      return true;
+    };
     return child;
   };
 
-  return { spawnImpl, requests, launches, completedTurns: () => completedTurns };
+  return { spawnImpl, requests, launches, children, completedTurns: () => completedTurns };
 }

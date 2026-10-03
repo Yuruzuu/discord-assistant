@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createAppServer } from './app-server.mjs';
 import { createReplyStream } from './reply-stream.mjs';
-import { validateReplyMessage, validateReplyPlan } from './reply-validation.mjs';
+import { createReplyValidator } from './reply-validation.mjs';
 import { responderEnvironment } from './worker-environment.mjs';
 import { replySchema, replyStyle } from './reply-style.mjs';
 import { replyDefaults } from './reply-defaults.mjs';
@@ -69,7 +69,7 @@ export function createConversationReply({ command = process.env.CODEX_CLI_PATH |
     directory = await mkdtemp(join(tmpdir(), 'nova-conversation-'));
     if (closed) { await reset(); throw new Error('The Codex conversation is stopped'); }
     server = createAppServer({ command, cwd: directory, env: responderEnvironment(), spawnImpl, onNotification: receive, onFailure: failTurn });
-    await server.request('initialize', { clientInfo: { name: 'nova-discord', title: 'Nova Discord', version: '2.5.0' }, capabilities: { experimentalApi: true } });
+    await server.request('initialize', { clientInfo: { name: 'nova-discord', title: 'Nova Discord', version: '2.5.1' }, capabilities: { experimentalApi: true } });
     server.notify('initialized');
     const current = await server.request('config/read', { includeLayers: false });
     const disabledServers = Object.fromEntries(Object.keys(current.config.mcp_servers || {}).map((name) => [name, { enabled: false }]));
@@ -95,9 +95,11 @@ export function createConversationReply({ command = process.env.CODEX_CLI_PATH |
 
   async function reset() {
     const previous = server;
+    const previousDirectory = directory;
+    directory = null;
     server = null; startup = null; threadId = null; newestContextId = null; usage = null;
     if (previous) await previous.close();
-    if (directory) { const previousDirectory = directory; directory = null; await rm(previousDirectory, { recursive: true, force: true }); }
+    if (previousDirectory) await rm(previousDirectory, { recursive: true, force: true });
   }
 
   async function runTurn(context, signal, { onMessage } = {}) {
@@ -113,10 +115,11 @@ export function createConversationReply({ command = process.env.CODEX_CLI_PATH |
     const completion = new Promise((accept, decline) => { resolve = accept; reject = decline; });
     completion.catch(() => {});
     const published = [];
+    const validator = createReplyValidator(context);
     const turn = { resolve, reject, phases: new Map(), delivery: Promise.resolve(), turnId: null, error: null, cancel: new AbortController() };
     const deliverySignal = signal ? AbortSignal.any([signal, turn.cancel.signal]) : turn.cancel.signal;
     turn.stream = createReplyStream((raw, index) => {
-      const message = validateReplyMessage(raw, context);
+      const message = validator.message(raw);
       if (!onMessage) return;
       turn.delivery = turn.delivery.then(async () => {
         deliverySignal.throwIfAborted();
@@ -140,7 +143,7 @@ export function createConversationReply({ command = process.env.CODEX_CLI_PATH |
       if (signal?.aborted) abort();
       await completion;
       await turn.delivery;
-      const plan = validateReplyPlan(JSON.parse(turn.stream.text()), context);
+      const plan = validator.plan(JSON.parse(turn.stream.text()));
       if (published.length && (!plan.shouldReply || published.some((message, index) => JSON.stringify(message) !== JSON.stringify(plan.messages[index])))) {
         throw new Error('Codex changed a reply bubble after publishing it');
       }

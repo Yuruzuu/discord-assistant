@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { directMessageOwnerId } from './target.mjs';
 import { proactiveRoot } from './state.mjs';
@@ -24,34 +24,54 @@ export function parseMemoryCommand(message, botUserId) {
 
 export function createMemoryStore(filename) {
   let writes = Promise.resolve();
+  let directoryReady;
+  let cached;
+
+  function ensureDirectory() {
+    if (!directoryReady) directoryReady = mkdir(dirname(filename), { recursive: true, mode: 0o700 }).catch((error) => { directoryReady = null; throw error; });
+    return directoryReady;
+  }
+
+  function snapshot(text) {
+    return Object.freeze({ text, revision: createHash('sha256').update(text).digest('hex') });
+  }
 
   async function load() {
-    await mkdir(dirname(filename), { recursive: true, mode: 0o700 });
-    let text;
-    try { text = await readFile(filename, 'utf8'); }
+    await ensureDirectory();
+    let metadata;
+    try { metadata = await stat(filename, { bigint: true }); }
     catch (error) {
       if (error.code !== 'ENOENT') throw error;
+      directoryReady = null;
+      await ensureDirectory();
       try { await writeFile(filename, '# Nova memory\n', { flag: 'wx', mode: 0o600 }); }
       catch (error) { if (error.code !== 'EEXIST') throw error; }
-      text = await readFile(filename, 'utf8');
+      metadata = await stat(filename, { bigint: true });
     }
+    if (metadata.size > BigInt(maximumBytes)) throw new Error('memory.md exceeds 16 KiB; edit it before continuing');
+    const fingerprint = `${metadata.dev}:${metadata.ino}:${metadata.size}:${metadata.mtimeNs}:${metadata.ctimeNs}`;
+    if (cached?.fingerprint === fingerprint) return cached.value;
+    const text = await readFile(filename, 'utf8');
     if (Buffer.byteLength(text) > maximumBytes) throw new Error('memory.md exceeds 16 KiB; edit it before continuing');
-    return { text, revision: createHash('sha256').update(text).digest('hex') };
+    cached = { fingerprint, value: snapshot(text) };
+    return cached.value;
   }
 
   function update(transform) {
     const operation = writes.catch(() => {}).then(async () => {
       const previous = await load();
       const text = transform(previous.text);
+      if (text === previous.text) return previous;
       if (Buffer.byteLength(text) > maximumBytes) throw new Error('Memory is full; consolidate or edit memory.md');
       const temporary = `${filename}.${randomUUID()}.tmp`;
       try {
         await writeFile(temporary, text, { mode: 0o600 });
         if (await readFile(filename, 'utf8') !== previous.text) throw new Error('Memory changed during saving; retry your command');
         await rename(temporary, filename);
+        cached = null;
       }
       finally { await rm(temporary, { force: true }); }
-      return { text, revision: createHash('sha256').update(text).digest('hex') };
+      return snapshot(text);
     });
     writes = operation;
     return operation;
@@ -74,12 +94,7 @@ export function createMemoryStore(filename) {
         else append();
       }
       append();
-      const seen = new Set();
-      const unique = entries.filter((entry) => {
-        const key = entry;
-        if (seen.has(key)) return false;
-        seen.add(key); return true;
-      });
+      const unique = [...new Set(entries)];
       return '# Nova memory\n' + (unique.length ? `\n${unique.map((entry) => `- ${entry.replace(/\n/g, '\n  ')}`).join('\n\n')}\n` : '');
     });
   }

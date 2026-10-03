@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rename, rm, stat, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createMemoryStore, memoryPath, parseMemoryCommand } from '../src/proactive/memory.mjs';
@@ -85,5 +85,45 @@ test('only an owner-selected note or native reply is saved; consolidation is com
     assert.equal((await store.load()).text, saved);
     const result = await handler([owned('consolidate memory')]);
     assert.match(result.messages[0].content, /consolidated/);
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
+test('cached memory detects same-size edits with restored modification time and atomic replacements', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'nova-memory-cache-'));
+  const filename = join(directory, 'memory.md');
+  try {
+    const store = createMemoryStore(filename);
+    await store.load();
+    await writeFile(filename, '# Nova memory\n\n- First note\n');
+    const first = await store.load();
+    assert.equal(await store.load(), first);
+    assert.equal(Object.isFrozen(first), true);
+    const metadata = await stat(filename);
+    await writeFile(filename, '# Nova memory\n\n- Other note\n');
+    await utimes(filename, metadata.atime, metadata.mtime);
+    const edited = await store.load();
+    assert.match(edited.text, /Other note/);
+    assert.notEqual(edited.revision, first.revision);
+    const replacement = join(directory, 'replacement.md');
+    await writeFile(replacement, '# Nova memory\n\n- Third note\n');
+    await rename(replacement, filename);
+    assert.match((await store.load()).text, /Third note/);
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
+test('unchanged consolidation skips file replacement and deleted memory directories recover', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'nova-memory-noop-'));
+  const filename = join(directory, 'notes', 'memory.md');
+  try {
+    const store = createMemoryStore(filename);
+    await store.remember('Approved fact');
+    await store.consolidate();
+    const before = await stat(filename, { bigint: true });
+    await store.consolidate();
+    const after = await stat(filename, { bigint: true });
+    assert.equal(after.ino, before.ino);
+    assert.equal(after.mtimeNs, before.mtimeNs);
+    await rm(join(directory, 'notes'), { recursive: true });
+    assert.equal((await store.load()).text, '# Nova memory\n');
   } finally { await rm(directory, { recursive: true, force: true }); }
 });

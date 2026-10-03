@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { setTimeout } from 'node:timers/promises';
+import { stat } from 'node:fs/promises';
+import { createReplyValidator } from '../src/proactive/reply-validation.mjs';
 import { createCodexResponder, responderEnvironment, validateReplyPlan } from '../src/proactive/codex-responder.mjs';
 import { fakeCodexServer } from './helpers/codex-app-server.mjs';
 
@@ -107,5 +109,32 @@ test('cancellation interrupts the active turn and prevents late bubble delivery'
     await rejected;
     assert.ok(server.requests.some((request) => request.method === 'turn/interrupt'));
     assert.equal(respond.status().threadId, null);
+  } finally { await respond.close(); }
+});
+
+test('stream and final validation reuse one catalog while preserving rejection rules', () => {
+  let catalogReads = 0;
+  const expression = { get markup() { catalogReads += 1; return '<:wave:300000000000000001>'; } };
+  const validator = createReplyValidator({ expressions: { emojis: [expression], stickers: [] }, allowedGifUrls: [] });
+  const bubble = { content: 'hello <:wave:300000000000000001>', gifUrl: null, stickerIds: [] };
+  for (let index = 0; index < 5; index += 1) validator.message(bubble);
+  const plan = validator.plan({ shouldReply: true, messages: Array.from({ length: 5 }, () => bubble) });
+  assert.equal(plan.messages.length, 5);
+  assert.equal(catalogReads, 1);
+  assert.throws(() => validator.message({ ...bubble, content: '<:missing:300000000000000002>' }), /unavailable custom emoji/);
+});
+
+test('old-worker cleanup cannot delete a replacement worker directory during concurrent warmup', async () => {
+  const server = fakeCodexServer({ closeDelayMs: 30 });
+  const respond = createCodexResponder({ spawnImpl: server.spawnImpl });
+  try {
+    await respond.warmup();
+    const oldDirectory = server.launches[0].options.cwd;
+    server.children[0].stdin.emit('error', new Error('Lost pipe'));
+    await Promise.all([respond.warmup(), respond.warmup()]);
+    assert.equal(server.launches.length, 2);
+    assert.equal((await stat(server.launches[1].options.cwd)).isDirectory(), true);
+    await assert.rejects(() => stat(oldDirectory), { code: 'ENOENT' });
+    await respond(context);
   } finally { await respond.close(); }
 });
