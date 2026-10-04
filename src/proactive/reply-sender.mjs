@@ -170,9 +170,9 @@ export function createReplySender(service, { guildId, channelId, listenerId, dir
         const target = await sendTarget(item.channelId, signal);
         const nonce = `${batchId}:x${index}`;
         const mentionUserIds = item.notify ? [...new Set([...item.content.matchAll(/<@!?(\d{17,20})>/g)].map((match) => match[1]))].slice(0, 5) : [];
-        sentMessages.push(await deliver(`${batchId}:channel:${index}`, () => sendResolvedMessage(target, {
+        sentMessages.push(await deliver(`${batchId}:channel:${index}`, async () => ({ ...await sendResolvedMessage(target, {
           channelId: target.channel.id, guildId: target.channel.guild_id, content: item.content, mentionUserIds, nonce,
-        }, signal), { channelId, triggerMessageId: trigger.id, nonce }));
+        }, signal), crossChannel: true }), { channelId, triggerMessageId: trigger.id, nonce }));
       }
     } catch (error) {
       error.batchId = batchId;

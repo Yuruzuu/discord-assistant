@@ -40,13 +40,16 @@ function receipt(value, accountId, channelId) {
   if (value.accountId !== undefined && value.accountId !== accountId) throw new Error('Receipt belongs to a different account');
   const messageId = identifier(value.message.id, 'receipt message ID');
   if (!messageId) throw new Error('A confirmed Discord message ID is required');
-  const actualChannel = value.message.channelId || value.message.channel_id || channelId;
-  if (actualChannel !== channelId) throw new Error('Receipt belongs to a different channel');
+  const actualChannel = identifier(value.message.channelId || value.message.channel_id, 'receipt channel ID') || channelId;
+  // Owner-requested posts to other channels are journaled with the conversation that asked for them, so only receipts explicitly marked cross-channel may name another channel.
+  const crossChannel = actualChannel !== channelId;
+  if (crossChannel && value.crossChannel !== true) throw new Error('Receipt belongs to a different channel');
   const guildId = identifier(value.message.guildId || value.message.guild_id, 'receipt guild ID');
   return {
     accountId,
     ...metadata({ nonce: value.nonce }, channelId),
-    message: { id: messageId, channelId, ...(guildId ? { guildId } : {}), url: `https://discord.com/channels/${guildId || '@me'}/${channelId}/${messageId}` },
+    ...(crossChannel ? { crossChannel: true } : {}),
+    message: { id: messageId, channelId: actualChannel, ...(guildId ? { guildId } : {}), url: `https://discord.com/channels/${guildId || '@me'}/${actualChannel}/${messageId}` },
   };
 }
 

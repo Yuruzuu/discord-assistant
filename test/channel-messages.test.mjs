@@ -6,6 +6,10 @@ import { createDiscordReadTools } from '../src/proactive/read-tools.mjs';
 import { createReplySender } from '../src/proactive/reply-sender.mjs';
 import { createProactiveEngine } from '../src/proactive/engine.mjs';
 import { directMessageOwnerId } from '../src/proactive/target.mjs';
+import { createDeliveryJournal } from '../src/proactive/delivery-journal.mjs';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 const guildId = '100000000000000001';
 const textChannelId = '200000000000000001';
@@ -96,4 +100,30 @@ test('the engine confirms posts in the DM, and reports a failed post instead of 
     assert.deepEqual(failing.confirmations, [`I couldn’t post in <#${textChannelId}>: Missing Permissions`]);
     assert.equal(failing.engine.status().errors, 1);
   } finally { failing.engine.stop(); }
+});
+
+test('the real delivery journal records cross-channel post receipts and survives a restart', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'nova-cross-channel-'));
+  try {
+    const journal = await createDeliveryJournal({ accountId: 'reader', channelId: dmId, root });
+    const target = { account: { id: 'reader', client: { sendMessage: async (channel) => ({ id: '700000000000000001', channel_id: channel, content: 'good job' }) } }, channel: { id: textChannelId, guild_id: guildId } };
+    const send = createReplySender({}, { channelId: dmId, listenerId: 'fixture', directMessages: true, deliveryJournal: journal, sendTarget: async () => target });
+    const trigger = { id: '300000000000000001' };
+    const result = await send.channelMessages([{ channelId: textChannelId, content: 'good job', notify: false }], trigger);
+    assert.equal(result.sentMessages[0].message.channelId, textChannelId);
+    const [entry] = (await journal.entries()).filter((item) => item.operationId.endsWith(':channel:0'));
+    assert.equal(entry.status, 'sent');
+    assert.equal(entry.channelId, dmId);
+    assert.deepEqual(entry.receipt.message, { id: '700000000000000001', channelId: textChannelId, guildId, url: `https://discord.com/channels/${guildId}/${textChannelId}/700000000000000001` });
+    await assert.rejects(() => journal.record('plain:0', { accountId: 'reader', message: { id: '700000000000000002', channelId: textChannelId } }), /different channel/, 'unmarked receipts for other channels are still rejected');
+    let posts = 0;
+    target.account.client.sendMessage = async () => { posts += 1; return { id: '700000000000000009' }; };
+    const replay = await send.channelMessages([{ channelId: textChannelId, content: 'good job', notify: false }], trigger);
+    assert.equal(posts, 0, 'a repeated plan reuses the journaled receipt instead of reposting');
+    assert.equal(replay.sentMessages[0].message.url, result.sentMessages[0].message.url);
+    await journal.close();
+    const restored = await createDeliveryJournal({ accountId: 'reader', channelId: dmId, root });
+    assert.equal((await restored.entries()).find((item) => item.operationId.endsWith(':channel:0')).receipt.crossChannel, true);
+    await restored.close();
+  } finally { await rm(root, { recursive: true, force: true }); }
 });
