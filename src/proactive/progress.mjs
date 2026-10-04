@@ -2,10 +2,10 @@ const snowflake = /^\d{17,20}$/;
 const appNames = { gmail: 'Gmail', google_drive: 'Google Drive', github: 'GitHub', linear: 'Linear', figma: 'Figma', chatgpt_space: 'ChatGPT Space', sites: 'Sites' };
 // Progress text quotes model-chosen arguments, so strip anything that could become mentions, markup or extra lines.
 const quote = (value) => `"${String(value).replace(/[\r\n`*_~|<>@#]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 60)}"`;
-const plural = (count, word) => `${count} ${word}${count === 1 ? '' : 's'}`;
+const plural = (count, word) => `*${count}* ${word}${count === 1 ? '' : 's'}`;
 function listed(items, render, limit = 3) {
   const shown = items.slice(0, limit).map(render);
-  if (items.length > limit) shown.push(`${items.length - limit} more`);
+  if (items.length > limit) shown.push(`*${items.length - limit}* more`);
   return shown.length > 1 ? `${shown.slice(0, -1).join(', ')} and ${shown.at(-1)}` : shown[0] || '';
 }
 const ids = (values) => [...new Set((Array.isArray(values) ? values : []).filter((value) => snowflake.test(value)))];
@@ -26,7 +26,7 @@ function period(args = {}) {
   if (args.day === 'today' || args.day === 'yesterday') return args.day;
   if (args.since) return 'in the requested time window';
   const hours = Number.isFinite(args.hours) ? args.hours : 24;
-  return `over the last ${hours === 1 ? 'hour' : `${hours} hours`}`;
+  return `over the last ${hours === 1 ? 'hour' : `*${hours}* hours`}`;
 }
 function activitySubject(args = {}) {
   const keywords = Array.isArray(args.keywords) ? args.keywords.filter((keyword) => typeof keyword === 'string' && keyword.trim()) : [];

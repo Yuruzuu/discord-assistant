@@ -51,7 +51,7 @@ test('only a completed longer search reports its result count', async () => {
   advance(5000);
   await progress.receive({ stage: 'completed', toolName: 'discord_search_messages', resultCount: 1 });
   await progress.receive({ stage: 'completed', toolName: 'discord_search_messages', resultCount: 50 });
-  assert.deepEqual(sent.map((entry) => entry.content), ['I’m currently searching the server for messages.', 'I’m currently searching the server for messages and found 1 result.']);
+  assert.deepEqual(sent.map((entry) => entry.content), ['I’m currently searching the server for messages.', 'I’m currently searching the server for messages and found *1* result.']);
   progress.close();
 });
 
@@ -141,8 +141,8 @@ test('batch searches and app calls read like an assistant, and argument text can
   await progress.receive({ stage: 'started', toolName: 'discord_search_batch', arguments: { guildId: '100000000000000001', channelIds: ['200000000000000001'], searches } });
   await progress.receive({ stage: 'completed', toolName: 'discord_search_batch', arguments: { guildId: '100000000000000001', channelIds: ['200000000000000001'], searches }, resultCount: 42 });
   assert.deepEqual(lines, [
-    'I’m currently searching <#200000000000000001> and <#200000000000000002> for 4 keywords: "fate", "hero bow", "crimson moon" and 1 more.',
-    'I searched <#200000000000000001> and <#200000000000000002> for 4 keywords: "fate", "hero bow", "crimson moon" and 1 more and found 42 results.',
+    'I’m currently searching <#200000000000000001> and <#200000000000000002> for *4* keywords: "fate", "hero bow", "crimson moon" and *1* more.',
+    'I searched <#200000000000000001> and <#200000000000000002> for *4* keywords: "fate", "hero bow", "crimson moon" and *1* more and found *42* results.',
   ]);
   await progress.receive({ stage: 'started', toolName: 'apps_call_tool', arguments: { tool: 'google_drive.get_spreadsheet_cells' } });
   assert.equal(lines.at(-1), 'I’m checking your Google Drive.');
