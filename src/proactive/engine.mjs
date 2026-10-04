@@ -1,4 +1,5 @@
 import { acceptsListenerMessage, mentionsBot } from './target.mjs';
+import { createProgressReporter } from './progress.mjs';
 
 export function isQuestion(content) {
   return /\?|^(?:\s|<@!?\d+>)*(?:what|why|how|where|when|who|can|could|would|should|is|are|does|do|help)\b/i.test(content || '');
@@ -10,7 +11,7 @@ export function createProactiveEngine({ botUserId, guildId, channelId, directMes
   const seen = new Set();
   const replyTimes = [];
   const cancellation = new AbortController();
-  const statistics = { received: 0, triggered: 0, replyBatches: 0, sentMessages: 0, streamedMessages: 0, lastFirstResponseMs: null, skipped: 0, errors: 0, queued: 0, lastError: null };
+  const statistics = { received: 0, triggered: 0, replyBatches: 0, sentMessages: 0, streamedMessages: 0, progressMessages: 0, progressErrors: 0, lastFirstResponseMs: null, lastFirstActivityMs: null, skipped: 0, errors: 0, queued: 0, lastError: null };
   let busy = false;
   let stopped = false;
   let lastReplyAt = -Infinity;
@@ -26,15 +27,29 @@ export function createProactiveEngine({ botUserId, guildId, channelId, directMes
     const commandBatch = batch.kind === 'command';
     const stopTyping = startTyping(cancellation.signal);
     let streamed = 0;
+    let progressSent = false;
+    const progress = createProgressReporter({
+      signal: cancellation.signal, now,
+      send: (content, signal, index) => sendReplies.progress?.(content, batch.messages.at(-1), signal, { index }),
+      onSent: (receipt) => {
+        if (!receipt?.sentMessages?.length) return;
+        if (!progressSent) statistics.lastFirstActivityMs = now() - batch.firstReceivedAt;
+        progressSent = true;
+        statistics.progressMessages += receipt.sentMessages.length;
+        report();
+      },
+      onError: () => { statistics.progressErrors += 1; report(); },
+    });
     try {
       let response;
       if (commandBatch) response = await handleCommands(batch.messages, cancellation.signal);
       else {
         const context = await getContext(batch.messages, cancellation.signal);
         cancellation.signal.throwIfAborted();
-        response = await generateReply({ ...context, triggerMessages: batch.messages, mode }, cancellation.signal, { onMessage: async (message, index, deliverySignal) => {
+        response = await generateReply({ ...context, triggerMessages: batch.messages, mode }, cancellation.signal, { onProgress: progress.receive, onMessage: async (message, index, deliverySignal) => {
           if (index !== streamed || streamed >= 5) throw new Error('Reply bubbles arrived out of order');
           cancellation.signal.throwIfAborted();
+          progress.close();
           const receipt = await sendReplies([message], batch.messages.at(-1), deliverySignal || cancellation.signal, { offset: streamed });
           if (streamed === 0) statistics.lastFirstResponseMs = now() - batch.firstReceivedAt;
           streamed += 1;
@@ -46,6 +61,7 @@ export function createProactiveEngine({ botUserId, guildId, channelId, directMes
       }
       if (!response.shouldReply || stopped) { statistics.skipped += batch.messages.length; return; }
       cancellation.signal.throwIfAborted();
+      progress.close();
       const remaining = response.messages.slice(streamed);
       const sent = remaining.length ? await sendReplies(remaining, batch.messages.at(-1), cancellation.signal, { offset: streamed }) : { sentMessages: [] };
       if (!streamed && sent.sentMessages.length) statistics.lastFirstResponseMs = now() - batch.firstReceivedAt;
@@ -61,7 +77,7 @@ export function createProactiveEngine({ botUserId, guildId, channelId, directMes
         statistics.sentMessages += error.sentMessages.length;
         lastReplyAt = now();
       }
-    } finally { stopTyping(); }
+    } finally { progress.close(); stopTyping(); }
     report();
   }
 

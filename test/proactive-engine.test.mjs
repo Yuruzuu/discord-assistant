@@ -253,3 +253,54 @@ test('owner memory commands bypass the model and keep adjacent chat out of the s
     assert.equal(commands.length, 1);
   } finally { engine.stop(); }
 });
+
+test('real tool progress precedes final replies without consuming final bubble offsets or response counters', async () => {
+  const activity = [];
+  const finals = [];
+  const sendReplies = async (messages, trigger, signal, { offset }) => {
+    finals.push({ messages, trigger, offset });
+    return { sentMessages: messages };
+  };
+  sendReplies.progress = async (content, trigger, signal, { index }) => {
+    activity.push({ content, trigger, index });
+    return { sentMessages: [content] };
+  };
+  const { engine } = fixture({ sendReplies, generateReply: async (_, signal, { onProgress, onMessage }) => {
+    await onProgress({ stage: 'started', toolName: 'discord_search_messages' }, signal);
+    assert.equal(activity.length, 1);
+    await onMessage({ content: 'Found the discussion' }, 0);
+    await onProgress({ stage: 'failed', toolName: 'discord_message_context' }, signal);
+    return { shouldReply: true, messages: [{ content: 'Found the discussion' }, { content: 'Here is the rest' }] };
+  } });
+  try {
+    const incoming = message({ mentions: [{ id: botUserId }] });
+    await engine.receive(incoming);
+    await until(() => !engine.status().generating && finals.length === 2);
+    assert.equal(activity.length, 1);
+    assert.equal(activity[0].trigger.id, incoming.id);
+    assert.equal(activity[0].index, 0);
+    assert.deepEqual(finals.map((sent) => sent.offset), [0, 1]);
+    assert.equal(engine.status().progressMessages, 1);
+    assert.equal(engine.status().sentMessages, 2);
+    assert.equal(engine.status().streamedMessages, 1);
+    assert.ok(engine.status().lastFirstActivityMs !== null);
+    assert.ok(engine.status().lastFirstResponseMs !== null);
+  } finally { engine.stop(); }
+});
+
+test('failed activity delivery leaves the generated final answer intact', async () => {
+  const sendReplies = async (messages) => ({ sentMessages: messages });
+  sendReplies.progress = async () => { throw new Error('Activity send rejected'); };
+  const { engine } = fixture({ sendReplies, generateReply: async (_, signal, { onProgress }) => {
+    await onProgress({ stage: 'started', toolName: 'discord_search_messages' }, signal);
+    return { shouldReply: true, messages: [{ content: 'Here is the answer' }] };
+  } });
+  try {
+    await engine.receive(message({ mentions: [{ id: botUserId }] }));
+    await until(() => engine.status().replyBatches === 1);
+    assert.equal(engine.status().progressMessages, 0);
+    assert.equal(engine.status().progressErrors, 1);
+    assert.equal(engine.status().errors, 0);
+    assert.equal(engine.status().sentMessages, 1);
+  } finally { engine.stop(); }
+});

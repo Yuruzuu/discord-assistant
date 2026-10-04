@@ -24,3 +24,38 @@ test('streamed bubbles reuse routing, preserve nonces and reference the trigger 
   await send([{ content: 'Next reply' }], { id: '300000000000000002' });
   assert.equal(resolutions, 2);
 });
+
+test('progress uses separate identities and leaves all five final bubbles available for the native reply', async () => {
+  let resolutions = 0;
+  const payloads = [];
+  const channelId = '200000000000000001';
+  const service = { resolveChannel: async () => {
+    resolutions += 1;
+    return { channel: { id: channelId }, account: { id: 'reader', client: { sendMessage: async (_, payload) => {
+      payloads.push(payload);
+      return { id: `40000000000000000${payloads.length}`, content: payload.content };
+    } } } };
+  } };
+  const send = createReplySender(service, { channelId, listenerId: 'fixture' });
+  const trigger = { id: '300000000000000001' };
+  const progress = await send.progress('checking chats', trigger, undefined, { index: 0 });
+  await send.progress('reading context', trigger, undefined, { index: 1 });
+  const final = await send(Array.from({ length: 5 }, (_, index) => ({ content: `Final ${index}` })), trigger);
+  assert.equal(resolutions, 1);
+  assert.equal(progress.batchId, final.batchId);
+  assert.equal(new Set(payloads.map((payload) => payload.nonce)).size, 7);
+  assert.deepEqual(payloads.slice(0, 2).map((payload) => payload.nonce), [`${final.batchId}:p0`, `${final.batchId}:p1`]);
+  assert.ok(payloads.slice(0, 2).every((payload) => payload.message_reference === undefined));
+  assert.ok(payloads.slice(0, 2).every((payload) => payload.allowed_mentions.parse.length === 0));
+  assert.equal(payloads[2].message_reference.message_id, trigger.id);
+  assert.equal(payloads[2].nonce, `${final.batchId}:0`);
+  assert.ok(payloads.slice(3).every((payload) => payload.message_reference === undefined));
+  await assert.rejects(send.progress('too many', trigger, undefined, { index: 3 }), /Invalid progress/);
+});
+
+test('cancelled progress sends do not perform channel resolution or posting', async () => {
+  const cancellation = new AbortController();
+  cancellation.abort();
+  const send = createReplySender({ resolveChannel: () => { throw new Error('Should not resolve'); } }, { channelId: '200000000000000001', listenerId: 'fixture' });
+  await assert.rejects(send.progress('checking chats', { id: '300000000000000001' }, cancellation.signal), { name: 'AbortError' });
+});

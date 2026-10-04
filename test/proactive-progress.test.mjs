@@ -1,0 +1,106 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import { createProgressReporter } from '../src/proactive/progress.mjs';
+
+function fixture(options = {}) {
+  const sent = [];
+  let timestamp = 0;
+  const progress = createProgressReporter({
+    now: () => timestamp,
+    send: async (content, signal, index) => { signal.throwIfAborted(); sent.push({ content, index }); return { sentMessages: [content] }; },
+    ...options,
+  });
+  return { progress, sent, advance: (amount) => { timestamp += amount; } };
+}
+
+test('real tool actions produce fixed summaries without exposing model text or arguments', async () => {
+  const { progress, sent } = fixture();
+  await progress.receive({ stage: 'started', toolName: 'discord_search_messages', summary: 'private reasoning', arguments: { query: 'private query' }, result: 'private messages' });
+  assert.deepEqual(sent, [{ content: 'i’m searching the Discord chats now.', index: 0 }]);
+  for (const toolName of ['reasoning', 'shell', 'constructor', '__proto__']) await progress.receive({ stage: 'started', toolName });
+  await progress.receive({ stage: 'reasoning', toolName: 'discord_search_messages' });
+  assert.equal(sent.length, 1);
+  progress.close();
+});
+
+test('progress deduplicates activities, throttles repeated tool work and limits each turn to three updates', async () => {
+  const { progress, sent, advance } = fixture();
+  await progress.receive({ stage: 'started', toolName: 'discord_list_servers' });
+  await progress.receive({ stage: 'started', toolName: 'discord_list_channels' });
+  await progress.receive({ stage: 'started', toolName: 'discord_search_messages' });
+  await progress.receive({ stage: 'started', toolName: 'discord_search_messages' });
+  advance(1500);
+  await progress.receive({ stage: 'started', toolName: 'discord_message_context' });
+  advance(5000);
+  await progress.receive({ stage: 'started', toolName: 'discord_browse_messages' });
+  await progress.receive({ stage: 'started', toolName: 'discord_user_info' });
+  await progress.receive({ stage: 'failed', toolName: 'discord_search_messages' });
+  assert.deepEqual(sent.map((entry) => entry.index), [0, 1, 2]);
+  assert.match(sent[0].content, /servers/);
+  assert.match(sent[1].content, /searching/);
+  assert.match(sent[2].content, /surrounding/);
+  progress.close();
+});
+
+test('only a completed longer search reports its result count', async () => {
+  const { progress, sent, advance } = fixture();
+  await progress.receive({ stage: 'completed', toolName: 'discord_search_messages', resultCount: 50 });
+  await progress.receive({ stage: 'started', toolName: 'discord_search_messages' });
+  await progress.receive({ stage: 'completed', toolName: 'discord_search_messages', resultCount: 50 });
+  advance(5000);
+  await progress.receive({ stage: 'completed', toolName: 'discord_search_messages', resultCount: 1 });
+  await progress.receive({ stage: 'completed', toolName: 'discord_search_messages', resultCount: 50 });
+  assert.deepEqual(sent.map((entry) => entry.content), ['i’m searching the Discord chats now.', 'the Discord search finished; i found 1 matching message.']);
+  progress.close();
+});
+
+test('failed lookups show a factual failure without disclosing raw errors', async () => {
+  const { progress, sent } = fixture();
+  await progress.receive({ stage: 'failed', toolName: 'discord_search_messages', error: 'secret credential error' });
+  assert.deepEqual(sent.map((entry) => entry.content), ['that Discord lookup failed; i don’t have those results yet.']);
+  progress.close();
+});
+
+test('progress delivery failures are bounded and do not reject the tool callback', async () => {
+  let attempts = 0;
+  let errors = 0;
+  const { progress, advance } = fixture({
+    send: async () => { attempts += 1; throw new Error('Send failed'); },
+    onError: () => { errors += 1; },
+  });
+  for (const toolName of ['discord_list_servers', 'discord_search_messages', 'discord_message_context', 'discord_user_info']) {
+    await progress.receive({ stage: 'started', toolName });
+    advance(5000);
+  }
+  assert.equal(attempts, 3);
+  assert.equal(errors, 3);
+  progress.close();
+});
+
+test('closing cancels an active progress send and suppresses queued and late updates', async () => {
+  const signals = [];
+  const { progress } = fixture({ send: async (_, signal) => {
+    signals.push(signal);
+    await new Promise((resolve) => signal.addEventListener('abort', resolve, { once: true }));
+    signal.throwIfAborted();
+  } });
+  const first = progress.receive({ stage: 'started', toolName: 'discord_list_servers' });
+  const second = progress.receive({ stage: 'started', toolName: 'discord_search_messages' });
+  await Promise.resolve();
+  progress.close();
+  await Promise.all([first, second]);
+  await progress.receive({ stage: 'started', toolName: 'discord_message_context' });
+  assert.equal(signals.length, 1);
+  assert.equal(signals[0].aborted, true);
+});
+
+test('listener and individual turn cancellation prevent progress sends', async () => {
+  for (const source of ['listener', 'turn']) {
+    const cancellation = new AbortController();
+    const { progress, sent } = fixture({ signal: source === 'listener' ? cancellation.signal : undefined });
+    cancellation.abort();
+    await progress.receive({ stage: 'started', toolName: 'discord_search_messages' }, source === 'turn' ? cancellation.signal : undefined);
+    assert.equal(sent.length, 0);
+    progress.close();
+  }
+});
