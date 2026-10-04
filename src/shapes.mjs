@@ -90,6 +90,8 @@ export function shapeMessage(message) {
   const author = message.author || {};
   const guildId = message.guild_id || null;
   const channelId = message.channel_id || null;
+  const reference = message.message_reference;
+  const forwarded = reference?.type === 1;
   return {
     id: message.id,
     guildId,
@@ -101,11 +103,19 @@ export function shapeMessage(message) {
     bot: Boolean(author.bot),
     timestamp: message.timestamp || null,
     editedTimestamp: message.edited_timestamp || null,
-    replyTo: message.referenced_message?.id || message.message_reference?.message_id || null,
+    replyTo: forwarded ? null : message.referenced_message?.id || reference?.message_id || null,
     content: message.content || '',
     attachments: (message.attachments || []).map(shapeAttachment),
     embeds: (message.embeds || []).map(shapeEmbed),
     ...(message.sticker_items?.length ? { stickers: message.sticker_items.map(shapeSticker) } : {}),
+    ...(forwarded ? {
+      forwardedFrom: { guildId: reference.guild_id || null, channelId: reference.channel_id || null, messageId: reference.message_id || null },
+      forwarded: (message.message_snapshots || []).map(({ message: snapshot = {} }) => ({
+        content: snapshot.content || '',
+        attachments: (snapshot.attachments || []).map(shapeAttachment),
+        embeds: (snapshot.embeds || []).map(shapeEmbed),
+      })),
+    } : {}),
   };
 }
 

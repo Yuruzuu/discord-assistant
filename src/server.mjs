@@ -1,7 +1,7 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod/v4';
-import { listExpressions, sendMessage, sendMessageBatch } from './messaging.mjs';
+import { forwardMessages, listExpressions, sendMessage, sendMessageBatch } from './messaging.mjs';
 import { register, success, writeAnnotations } from './tool-results.mjs';
 import { registerProactiveTools } from './proactive/tools.mjs';
 import { readToolFields, executeSharedReadTool } from './proactive/read-tool-registry.mjs';
@@ -20,7 +20,7 @@ export function createDiscordMcpServer(service, { novaOptions = {} } = {}) {
     { name: 'discord-readonly', version: '2.9.0' },
     {
       instructions:
-        'Discord bot access. Prefer discord_read for URLs. Use ordinary messages in DMs and for standalone mentions; use discord_reply for server follow-up chains when it clarifies the target. Use discord_list_servers and discord_list_channels to resolve names, discord_user_info for profiles, discord_list_expressions for custom emojis/stickers, and discord_add_reaction for emoji reactions. Be playful and concise; use server emojis naturally and discord_send_messages for a few short conversational bubbles. Only send or react when requested or under an explicitly started proactive listener. Start proactive mode only when asked; stop it when asked.',
+        'Discord bot access. Prefer discord_read for URLs. Use ordinary messages in DMs and for standalone mentions; use discord_reply for server follow-up chains when it clarifies the target. Use discord_list_servers and discord_list_channels to resolve names, discord_user_info for profiles, discord_list_expressions for custom emojis/stickers, discord_add_reaction for emoji reactions, and discord_forward_messages to natively forward existing messages and their attachments. Be playful and concise; use server emojis naturally and discord_send_messages for a few short conversational bubbles. Only send or react when requested or under an explicitly started proactive listener. Start proactive mode only when asked; stop it when asked.',
     },
   );
 
@@ -172,6 +172,21 @@ export function createDiscordMcpServer(service, { novaOptions = {} } = {}) {
       batchId: z.string().regex(/^[A-Za-z0-9_-]{1,20}$/).optional(),
     },
   }, async (args) => success(await sendMessageBatch(service, args)));
+
+  register(server, 'discord_forward_messages', {
+    title: 'Forward Discord Messages',
+    description: "Natively forward 1 to 10 existing messages, including their attachments, into a channel, thread or DM, in order. Sources can be message URLs or channelId plus messageId, from any channel the bot can read. Forwards cannot carry extra text; send a separate message for commentary. Only use when explicitly asked. Stops on failure and reports forwards already sent.",
+    annotations: writeAnnotations,
+    inputSchema: {
+      guildId: snowflake.optional(), channelId: snowflake.describe('Destination channel or thread ID'),
+      messages: z.array(z.object({
+        url: z.string().url().optional().describe('Discord message URL to forward'),
+        guildId: snowflake.optional(), channelId: snowflake.optional(), messageId: snowflake.optional(),
+      })).min(1).max(10),
+      intervalMs: z.number().int().min(0).max(5000).default(650),
+      batchId: z.string().regex(/^[A-Za-z0-9_-]{1,20}$/).optional(),
+    },
+  }, async (args) => success(await forwardMessages(service, args)));
 
   register(server, 'discord_user_info', {
     title: 'Get Discord User Info',

@@ -44,7 +44,7 @@ export function createGateway({ token, guildId, channelId, directMessages = fals
         content: message.content, timestamp: message.createdAt.toISOString(), webhook_id: message.webhookId,
         mentions: [...message.mentions.users.values()].map((user) => ({ id: user.id })),
         referenceAuthorId: message.mentions.repliedUser?.id || null,
-        message_reference: message.reference ? { message_id: message.reference.messageId, channel_id: message.reference.channelId } : null,
+        message_reference: message.reference ? { type: message.reference.type ?? 0, message_id: message.reference.messageId, channel_id: message.reference.channelId, guild_id: message.reference.guildId } : null,
         message_snapshots: [...(message.messageSnapshots?.values() || [])].slice(0, 5).map((snapshot) => ({ message: { content: String(snapshot.content || '').slice(0, 10000),
           attachments: [...(snapshot.attachments?.values() || [])].slice(0, 5).map((attachment) => ({ url: attachment.url, filename: attachment.name, content_type: attachment.contentType, waveform: attachment.waveform, duration_secs: attachment.duration })) } })),
         attachments: [...message.attachments.values()].slice(0, 10).map((attachment) => ({ url: attachment.url, filename: attachment.name, content_type: attachment.contentType, waveform: attachment.waveform, duration_secs: attachment.duration, size: attachment.size })),
