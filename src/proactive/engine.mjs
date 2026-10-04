@@ -11,7 +11,7 @@ export function createProactiveEngine({ botUserId, guildId, channelId, directMes
   const seen = new Set();
   const replyTimes = [];
   const cancellation = new AbortController();
-  const statistics = { received: 0, triggered: 0, replyBatches: 0, sentMessages: 0, streamedMessages: 0, progressMessages: 0, progressErrors: 0, lastFirstResponseMs: null, lastFirstActivityMs: null, skipped: 0, errors: 0, queued: 0, lastError: null };
+  const statistics = { received: 0, triggered: 0, replyBatches: 0, sentMessages: 0, streamedMessages: 0, progressMessages: 0, progressErrors: 0, reactions: 0, reactionErrors: 0, lastReactionError: null, lastFirstResponseMs: null, lastFirstActivityMs: null, skipped: 0, errors: 0, queued: 0, lastError: null };
   let busy = false;
   let stopped = false;
   let lastReplyAt = -Infinity;
@@ -27,6 +27,9 @@ export function createProactiveEngine({ botUserId, guildId, channelId, directMes
     const commandBatch = batch.kind === 'command';
     const stopTyping = startTyping(cancellation.signal);
     let streamed = 0;
+    let reacted = 0;
+    const trigger = batch.messages.at(-1);
+    let replyToMessageId = !directMessages && (batch.messages.length > 1 || trigger.message_reference?.message_id) ? trigger.id : undefined;
     let progressSent = false;
     const progress = createProgressReporter({
       signal: cancellation.signal, now,
@@ -45,12 +48,13 @@ export function createProactiveEngine({ botUserId, guildId, channelId, directMes
       if (commandBatch) response = await handleCommands(batch.messages, cancellation.signal);
       else {
         const context = await getContext(batch.messages, cancellation.signal);
+        if (!directMessages && context.recentMessages?.some((message) => BigInt(message.id) > BigInt(trigger.id) && message.authorId !== botUserId)) replyToMessageId = trigger.id;
         cancellation.signal.throwIfAborted();
         response = await generateReply({ ...context, triggerMessages: batch.messages, mode }, cancellation.signal, { onProgress: progress.receive, onMessage: async (message, index, deliverySignal) => {
           if (index !== streamed || streamed >= 5) throw new Error('Reply bubbles arrived out of order');
           cancellation.signal.throwIfAborted();
           progress.close();
-          const receipt = await sendReplies([message], batch.messages.at(-1), deliverySignal || cancellation.signal, { offset: streamed });
+          const receipt = await sendReplies([message], trigger, deliverySignal || cancellation.signal, { offset: streamed, replyToMessageId });
           if (streamed === 0) statistics.lastFirstResponseMs = now() - batch.firstReceivedAt;
           streamed += 1;
           statistics.sentMessages += receipt.sentMessages.length;
@@ -59,11 +63,27 @@ export function createProactiveEngine({ botUserId, guildId, channelId, directMes
           report();
         } });
       }
-      if (!response.shouldReply || stopped) { statistics.skipped += batch.messages.length; return; }
+      for (const reaction of response.reactions || []) {
+        cancellation.signal.throwIfAborted();
+        try {
+          await sendReplies.react(reaction, trigger, cancellation.signal);
+          statistics.reactions += 1;
+          reacted += 1;
+        } catch (error) {
+          if (stopped) return;
+          statistics.reactionErrors += 1;
+          statistics.lastReactionError = String(error.message).slice(0, 500);
+        }
+      }
+      if (!response.shouldReply || stopped) {
+        if (reacted) { statistics.replyBatches += 1; statistics.lastError = null; lastReplyAt = now(); }
+        else statistics.skipped += batch.messages.length;
+        return;
+      }
       cancellation.signal.throwIfAborted();
       progress.close();
       const remaining = response.messages.slice(streamed);
-      const sent = remaining.length ? await sendReplies(remaining, batch.messages.at(-1), cancellation.signal, { offset: streamed }) : { sentMessages: [] };
+      const sent = remaining.length ? await sendReplies(remaining, trigger, cancellation.signal, { offset: streamed, replyToMessageId }) : { sentMessages: [] };
       if (!streamed && sent.sentMessages.length) statistics.lastFirstResponseMs = now() - batch.firstReceivedAt;
       statistics.replyBatches += 1;
       statistics.sentMessages += sent.sentMessages.length;

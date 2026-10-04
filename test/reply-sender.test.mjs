@@ -11,7 +11,7 @@ test('streamed bubbles reuse routing, preserve nonces and reference the trigger 
     return { channel: { id: channelId }, account: { id: 'reader', client: { sendMessage: async (_, payload) => { payloads.push(payload); return { id: `40000000000000000${payloads.length}`, content: payload.content }; } } } };
   } };
   const send = createReplySender(service, { channelId, listenerId: 'fixture' });
-  const trigger = { id: '300000000000000001' };
+  const trigger = { id: '300000000000000001', message_reference: { message_id: '300000000000000000' } };
   const first = await send([{ content: 'First' }], trigger, undefined, { offset: 0 });
   const second = await send([{ content: 'Second' }], trigger, undefined, { offset: 1 });
   assert.equal(resolutions, 1);
@@ -37,7 +37,7 @@ test('progress uses separate identities and leaves all five final bubbles availa
     } } } };
   } };
   const send = createReplySender(service, { channelId, listenerId: 'fixture' });
-  const trigger = { id: '300000000000000001' };
+  const trigger = { id: '300000000000000001', message_reference: { message_id: '300000000000000000' } };
   const progress = await send.progress('checking chats', trigger, undefined, { index: 0 });
   await send.progress('reading context', trigger, undefined, { index: 1 });
   const final = await send(Array.from({ length: 5 }, (_, index) => ({ content: `Final ${index}` })), trigger);

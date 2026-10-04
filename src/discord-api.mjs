@@ -122,6 +122,10 @@ export class DiscordApiClient {
     return this.scheduleRequest('POST', path, payload, options);
   }
 
+  addReaction(channelId, messageId, emoji, options) {
+    return this.scheduleRequest('PUT', `/channels/${channelId}/messages/${messageId}/reactions/${encodeURIComponent(emoji)}/@me`, undefined, options);
+  }
+
   scheduleRequest(method, path, payload, options) {
     if (!path.startsWith('/')) throw new Error('Discord API paths must start with /');
     const { route, major } = requestRoute(path);
@@ -199,7 +203,7 @@ export class DiscordApiClient {
       } catch (error) {
         const code = connectionErrorCode(error);
         if (!code) throw error;
-        if (method === 'GET' && attempt < this.maxRetries && RETRYABLE_CONNECTION_CODES.has(code)) {
+        if (['GET', 'PUT'].includes(method) && attempt < this.maxRetries && RETRYABLE_CONNECTION_CODES.has(code)) {
           await this.sleep(250 * 2 ** attempt);
           continue;
         }
@@ -217,7 +221,7 @@ export class DiscordApiClient {
 
       if (response.ok) return body;
       if (response.status === 429 && attempt < this.maxRetries && retryable) continue;
-      if (method === 'GET' && response.status >= 500 && attempt < this.maxRetries) {
+      if (['GET', 'PUT'].includes(method) && response.status >= 500 && attempt < this.maxRetries) {
         await this.sleep(250 * 2 ** attempt);
         continue;
       }

@@ -7,6 +7,7 @@ import { register, success, writeAnnotations } from './tool-results.mjs';
 import { registerProactiveTools } from './proactive/tools.mjs';
 import { searchMessages } from './search.mjs';
 import { browseMessages } from './message-browser.mjs';
+import { addReaction } from './reactions.mjs';
 
 const snowflake = z.string().regex(/^\d{17,20}$/).describe('Discord snowflake ID');
 const messageFields = {
@@ -17,10 +18,10 @@ const messageFields = {
 
 export function createDiscordMcpServer(service) {
   const server = new McpServer(
-    { name: 'discord-readonly', version: '2.7.0' },
+    { name: 'discord-readonly', version: '2.8.0' },
     {
       instructions:
-        'Discord bot access. Prefer discord_read for URLs and discord_reply for answering an existing message. Use discord_list_servers and discord_list_channels to resolve names, discord_user_info for profiles, and discord_list_expressions for custom emojis/stickers. Be playful and concise; use server emojis naturally and discord_send_messages for a few short conversational bubbles. Only send when requested or under an explicitly started proactive listener. Start proactive mode only when asked; stop it when asked.',
+        'Discord bot access. Prefer discord_read for URLs. Use ordinary messages in DMs and for standalone mentions; use discord_reply for server follow-up chains when it clarifies the target. Use discord_list_servers and discord_list_channels to resolve names, discord_user_info for profiles, discord_list_expressions for custom emojis/stickers, and discord_add_reaction for emoji reactions. Be playful and concise; use server emojis naturally and discord_send_messages for a few short conversational bubbles. Only send or react when requested or under an explicitly started proactive listener. Start proactive mode only when asked; stop it when asked.',
     },
   );
 
@@ -201,6 +202,13 @@ export function createDiscordMcpServer(service) {
     description: 'Read a public user profile, avatar and account creation date. With guildId, also return server nickname, join date and roles. Does not report live presence.',
     inputSchema: { userId: snowflake, guildId: snowflake.optional(), accountId: z.string().optional() },
   }, async (args) => success(await getUserInfo(service, args)));
+
+  register(server, 'discord_add_reaction', {
+    title: 'React to Discord Message',
+    description: 'Add the bot reaction to a message using one Unicode emoji or custom emoji markup/name:id. Discord enforces emoji availability and channel permissions. Use when the user requests a reaction or under an explicitly enabled automatic conversation.',
+    annotations: { ...writeAnnotations, idempotentHint: true },
+    inputSchema: { guildId: snowflake.optional(), channelId: snowflake, messageId: snowflake, emoji: z.string().min(1).max(100) },
+  }, async (args) => success(await addReaction(service, args)));
 
   registerProactiveTools(server, service);
 

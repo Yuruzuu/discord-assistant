@@ -38,6 +38,12 @@ test('installed plugin runs from an isolated folder without repository dependenc
     await writeFile(credentialsFile, 'DISCORD_TOKEN=mock-plugin-token\n', { mode: 0o600 });
     const files = await pluginFiles(pluginRoot);
     assert.ok(files.every((path) => !path.includes('node_modules') && !/(?:^|\/)\.env(?:\.|$)/.test(path)));
+    const daemon = spawnSync(process.execPath, [join(pluginRoot, 'runtime', 'proactive.cjs')], {
+      cwd: temporary, env: isolatedEnvironment(credentialsFile), encoding: 'utf8',
+    });
+    assert.equal(daemon.status, 1);
+    assert.match(daemon.stderr, /A proactive listener configuration file is required/);
+    assert.ok(!daemon.stderr.includes('ERR_INVALID_ARG_TYPE'));
 
     await client.connect(new StdioClientTransport({
       command: process.execPath,
@@ -47,7 +53,7 @@ test('installed plugin runs from an isolated folder without repository dependenc
       stderr: 'pipe',
     }));
     const tools = (await client.listTools()).tools;
-    assert.equal(tools.length, 27);
+    assert.equal(tools.length, 28);
     assert.ok(tools.some((tool) => tool.name === 'discord_read'));
     assert.ok(tools.some((tool) => tool.name === 'discord_send_message' && tool.annotations.readOnlyHint === false));
     assert.ok(tools.some((tool) => tool.name === 'discord_list_expressions'));
