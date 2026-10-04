@@ -101,6 +101,7 @@ that file; `tokenEnv` is an environment variable name, not a token.
 | `discord_list_tickets` | Find forum posts, threads, and optionally text-channel tickets with parent/category/name/time filters. |
 | `discord_read` | Read a message/channel URL or IDs, auto-select the bot with access, and inline image attachments. |
 | `discord_search_messages` | Search indexed server messages and return up to 250 matches with links and continuation arguments. |
+| `discord_add_reaction` | React with any Unicode emoji or a custom emoji the bot can use; Discord checks access and availability. |
 | `discord_message_context` | Jump to a message and read its surrounding conversation. |
 | `discord_browse_messages` | Browse up to 250 messages at a time with older/newer cursors. |
 | `discord_start_direct_messages` | Start private DM conversations for the fixed owner only. |
@@ -253,19 +254,38 @@ searching the Discord chats now” or “i’m reading the surrounding messages 
 context.” These reflect actual tool calls, with at most three updates per reply,
 throttling and duplicate suppression. They stop once the answer starts. Progress
 messages have separate nonces and do not use up final reply bubbles or alter the
-first answer's native reply. Ordinary chat sends no progress filler. Raw internal
+answer's reply choice. Ordinary chat sends no progress filler. Raw internal
 reasoning, tool arguments and message contents are never used as activity text.
 Status reports `progressMessages`, `progressErrors` and `lastFirstActivityMs`.
 
 Complete reply bubbles are validated and sent as the model streams them. The
 first bubble gives a short useful answer; later bubbles add details. Raw partial
 tokens and reasoning are never posted. Each bubble has a stable nonce, the first
-keeps the native reply reference, and confirmed bubbles are not sent again at
+keeps any selected native reply reference, and confirmed bubbles are not sent again at
 turn completion. A failure after an early bubble stops the rest of the reply.
 `statistics.lastFirstResponseMs` measures the most recent first-send delay from
 local message receipt, and `statistics.streamedMessages` counts streamed sends.
 
-Replies use the native reply feature and can be a few playful short bubbles.
+DMs and standalone server mentions use ordinary messages. In servers, native
+replies identify ongoing reply chains, batched questions and answers where
+another message has arrived after the trigger. Only the first answer bubble
+uses that reference, with reply pings disabled. Longer answers can still use
+a few playful short bubbles.
+
+Nova can choose up to three emoji reactions to supplied messages in the current
+conversation, with or without a written answer. Unicode emoji are unrestricted;
+custom emoji must be usable by the bot. Discord enforces availability and
+permissions. Reactions are validated before the host sends them; a failed
+reaction does not prevent a written answer. Status reports `reactions`,
+`reactionErrors` and `lastReactionError` separately from message counts.
+
+Gateway startup handles both client and shard errors, makes up to three attempts
+with backoff, and safely terminates pending handshakes during teardown. Its
+45-second readiness deadline allows the SDK's 30-second handshake timeout to
+settle first. The socket cleanup workaround pins `@discordjs/ws` to 1.2.3.
+After connecting, the SDK handles reconnect/resume; status exposes
+`gateway.connected`, `connectionAttempts` and `reconnects` so a running process
+is distinguishable from an active Gateway connection.
 The bot shows a typing indicator while gathering context, generating a reply
 and sending its message batch, in server channels and owner DMs. It refreshes
 the indicator every seven seconds while working and stops on completion,
