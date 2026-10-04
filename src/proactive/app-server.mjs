@@ -40,15 +40,15 @@ export function createAppServer({ command, cwd, env, spawnImpl = spawn, onNotifi
             if (!closed) send({ jsonrpc: '2.0', id: message.id, result });
           }).catch((error) => {
             if (!closed) send({ jsonrpc: '2.0', id: message.id, error: { code: -32603, message: 'Discord reading tool failed' } });
-            onFailure(error);
+            onFailure(error, message.params);
           });
         } else {
           send({ jsonrpc: '2.0', id: message.id, error: { code: -32601, message: 'Nova cannot execute this tool or approval request' } });
-          onFailure(new Error('Codex requested an unsupported tool or approval'));
+          onFailure(new Error('Codex requested an unsupported tool or approval'), message.params);
         }
       } else {
         try { onNotification(message.method, message.params); }
-        catch (error) { onFailure(error); }
+        catch (error) { onFailure(error, message.params); }
       }
       return;
     }

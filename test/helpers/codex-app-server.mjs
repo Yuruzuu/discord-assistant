@@ -1,7 +1,7 @@
 import { EventEmitter } from 'node:events';
 import { PassThrough, Writable } from 'node:stream';
 
-export function fakeCodexServer({ plans, hang = false, tools = {}, toolCalls = [], events = [], delayMs = 5, closeDelayMs = 0 } = {}) {
+export function fakeCodexServer({ plans, hang = false, tools = {}, toolCalls = [], events = [], delayMs = 5, closeDelayMs = 0, accountType = 'chatgpt' } = {}) {
   const requests = [];
   const launches = [];
   const children = [];
@@ -35,7 +35,11 @@ export function fakeCodexServer({ plans, hang = false, tools = {}, toolCalls = [
         else if (message.method === 'config/read') reply({ config: { mcp_servers: { discord: { enabled: true, env: { DISCORD_TOKEN: 'hidden-fixture-token' } } } } });
         else if (message.method === 'thread/start') reply({ thread: { id: `thread-${++startedThreads}`, ephemeral: true } });
         else if (message.method === 'mcpServerStatus/list') reply({ data: [{ name: 'discord', tools }] });
-        else if (message.method === 'turn/interrupt') reply({});
+        else if (['turn/interrupt', 'thread/unsubscribe', 'thread/compact/start'].includes(message.method)) reply({});
+        else if (message.method === 'turn/steer') reply({ turnId: message.params.expectedTurnId });
+        else if (message.method === 'account/read') reply({ account: accountType === null ? null : { type: accountType, email: 'private@example.test', planType: 'plus' }, requiresOpenaiAuth: true });
+        else if (message.method === 'account/rateLimits/read') reply({ rateLimits: { primary: { usedPercent: 25, windowDurationMins: 300, resetsAt: 123456 } } });
+        else if (message.method === 'model/list') reply({ data: [{ id: 'fixture-model', model: 'fixture-model', displayName: 'Fixture', supportedReasoningEfforts: [{ reasoningEffort: 'low' }] }] });
         else if (message.method === 'turn/start') {
           const turnId = `turn-${++turns}`;
           const threadId = message.params.threadId;
