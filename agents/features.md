@@ -34,6 +34,7 @@ tests that cover it. Tool details are in [tools.md](tools.md).
 | Reactions (natural and status ⏳⚙️🔎✅⚠️⌛) | reply plan `reactions`; engine stages | `reply-sender.mjs` (`react`, `statusReaction`) | `reactions` |
 | **Forwards** | reply plan `forwards` (≤ 5), sent after bubbles and files | `reply-style.mjs`, `reply-validation.mjs`, `reply-sender.mjs` (`forwards`), `read-tools.mjs` (`forwardSource`) | `forwarding` |
 | **Connected apps (Gmail, Drive, GitHub, Linear, …), read-only** | owner DM tool calls `apps_list_tools`, `apps_call_tool`; `nova.json` `apps` | `connected-apps.mjs`, `read-tools.mjs`, `channel-runtime.mjs` | `connected-apps` |
+| Share app images (Slides thumbnails, Figma screenshots, image attachments) | reply plan `images` with handles from `apps_call_tool` results | `read-tools.mjs` (`shareableImages`, `sharedImage`), `reply-sender.mjs` (`images`), `discord-api.sendMessageImages` | `connected-apps` |
 | Scoped read tools during a turn | model tool calls | `read-tools.mjs`, `read-tool-registry.mjs` | `proactive-read-tools` |
 | Progress messages for tool activity | tool events | `progress.mjs` | `proactive-progress` |
 | Images and voice notes in context | attachments | `context-media.mjs`, `voice-transcriber.mjs` | `proactive-context-tools`, `voice-transcriber` |

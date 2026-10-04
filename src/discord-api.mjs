@@ -359,6 +359,21 @@ export class DiscordApiClient {
     return this.post(`/channels/${channelId}/messages`, form, options);
   }
 
+  sendMessageImages(channelId, payload, images, options) {
+    if (!Array.isArray(images) || images.length < 1 || images.length > 4) throw new Error('Provide one to four images');
+    const form = new FormData();
+    form.append('payload_json', JSON.stringify(payload));
+    let total = 0;
+    for (const [index, image] of images.entries()) {
+      if (typeof image.name !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/.test(image.name) || !/^image\/(png|jpeg|webp|gif)$/.test(image.mimeType) || typeof image.data !== 'string') throw new Error('Images require a safe filename, a supported image type and base64 data');
+      const bytes = Buffer.from(image.data, 'base64');
+      total += bytes.length;
+      if (!bytes.length || bytes.length > 8 * 1024 * 1024 || total > 20 * 1024 * 1024) throw new Error('Image byte limit exceeded');
+      form.append(`files[${index}]`, new Blob([bytes], { type: image.mimeType }), image.name);
+    }
+    return this.post(`/channels/${channelId}/messages`, form, options);
+  }
+
   createThread(channelId, payload, options) {
     return this.post(`/channels/${channelId}/threads`, payload, options);
   }

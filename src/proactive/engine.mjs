@@ -169,6 +169,10 @@ export function createProactiveEngine({ botUserId, guildId, channelId, directMes
         const attached = await sendReplies.files(response.files, trigger, signal, { replyToMessageId: streamed || sent.sentMessages.length ? undefined : replyToMessageId });
         statistics.sentMessages += attached.sentMessages.length;
       }
+      if (response.images?.length) {
+        const shown = await sendReplies.images(response.images, trigger, signal);
+        statistics.sentMessages += shown.sentMessages.length;
+      }
       if (response.forwards?.length) {
         const forwarded = await sendReplies.forwards(response.forwards, trigger, signal);
         statistics.forwards += forwarded.sentMessages.length;

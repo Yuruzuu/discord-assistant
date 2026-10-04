@@ -4,7 +4,7 @@ import { normalizeReactionEmoji } from '../reactions.mjs';
 import { splitDiscordText, validateGeneratedFiles } from './discord-chunks.mjs';
 import { shapeMessage } from '../shapes.mjs';
 
-export function createReplySender(service, { guildId, channelId, listenerId, directMessages = false, deliveryJournal, progressComponents, messageComponents, forwardSource = async () => { throw new Error('Forwarding is unavailable in this conversation'); } }) {
+export function createReplySender(service, { guildId, channelId, listenerId, directMessages = false, deliveryJournal, progressComponents, messageComponents, forwardSource = async () => { throw new Error('Forwarding is unavailable in this conversation'); }, sharedImage = () => null }) {
   let currentTrigger;
   let resolution;
   const temporaryReactions = new Map();
@@ -131,6 +131,25 @@ export function createReplySender(service, { guildId, channelId, listenerId, dir
           allowed_mentions: { parse: [], replied_user: false }, nonce, enforce_nonce: true,
           ...(!directMessages && replyToMessageId ? { message_reference: { message_id: replyToMessageId, channel_id: channelId, fail_if_not_exists: true } } : {}),
         }, validated, { signal });
+      } catch (error) { error.sendStatus = error.status && error.status < 500 ? 'rejected' : 'unknown'; throw error; }
+      return { accountId: target.account.id, nonce, message: shapeMessage({ ...message, channel_id: channelId, guild_id: guildId }) };
+    }, { channelId, triggerMessageId: trigger.id, nonce });
+    rememberFirstReply(trigger, receipt);
+    return { batchId, sentMessages: [receipt] };
+  };
+
+  send.images = async (handles, trigger, signal) => {
+    if (!handles?.length) return { sentMessages: [] };
+    const images = handles.slice(0, 4).map((handle) => sharedImage(handle)).filter(Boolean);
+    if (images.length !== Math.min(handles.length, 4)) throw new Error('Nova selected an image that is not available in this answer');
+    signal?.throwIfAborted();
+    const target = await resolve(trigger);
+    const batchId = batchIdFor(trigger);
+    const nonce = `${batchId}:i`;
+    const receipt = await deliver(`${batchId}:images`, async () => {
+      let message;
+      try {
+        message = await target.account.client.sendMessageImages(channelId, { allowed_mentions: { parse: [] }, nonce, enforce_nonce: true }, images, { signal });
       } catch (error) { error.sendStatus = error.status && error.status < 500 ? 'rejected' : 'unknown'; throw error; }
       return { accountId: target.account.id, nonce, message: shapeMessage({ ...message, channel_id: channelId, guild_id: guildId }) };
     }, { channelId, triggerMessageId: trigger.id, nonce });

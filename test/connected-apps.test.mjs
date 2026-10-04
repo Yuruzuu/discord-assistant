@@ -119,3 +119,52 @@ test('app tools exist only in the owner DM worker and block web links for the re
   await assert.rejects(() => tools.call('web_read_link', { url: 'https://example.com/' }), /lookup stub/);
   assert.deepEqual(calls, [['list', { app: 'gmail', limit: 40 }], ['call', { tool: 'gmail.search_emails', arguments: { query: 'hi' } }]]);
 });
+
+test('app images become per-answer shareable handles that Nova can post into the owner DM', async () => {
+  const png = Buffer.from('89504e470d0a1a0a', 'hex').toString('base64');
+  const connectedApps = { list: async () => ({}), call: async () => ({ app: 'google_drive', text: 'slide', toolImages: [{ mimeType: 'image/png', data: png }, { mimeType: 'image/svg+xml', data: 'PHN2Zz4=' }] }) };
+  const tools = createDiscordReadTools({ accounts: [] }, { channelId: '200000000000000004', guildId: null, directMessages: true }, { connectedApps });
+  const result = JSON.parse((await tools.call('apps_call_tool', { tool: 'google_drive.get_slide_thumbnail', arguments: {} })).contentItems[0].text);
+  assert.deepEqual(result.shareableImages, [{ handle: 'img1', mimeType: 'image/png' }], 'unsupported image types are not shareable');
+  assert.deepEqual(tools.sharedImage('img1'), { mimeType: 'image/png', data: png, name: 'google_drive-img1.png' });
+  tools.beginTurn();
+  assert.equal(tools.sharedImage('img1'), null, 'handles expire with the answer');
+
+  const uploads = [];
+  const service = { resolveChannel: async () => ({ channel: { id: '200000000000000004' }, account: { id: 'reader', client: {
+    sendMessageImages: async (_, payload, images) => { uploads.push({ payload, images }); return { id: '700000000000000001', attachments: [] }; },
+  } } }) };
+  const image = { mimeType: 'image/png', data: png, name: 'google_drive-img1.png' };
+  const { createReplySender } = await import('../src/proactive/reply-sender.mjs');
+  const trigger = { id: '400000000000000001' };
+  await assert.rejects(() => createReplySender(service, { channelId: '200000000000000004', listenerId: 'fixture' }).images(['img1'], trigger), /not available/);
+  const send = createReplySender(service, { channelId: '200000000000000004', listenerId: 'fixture', sharedImage: (handle) => (handle === 'img1' ? image : null) });
+  await assert.rejects(() => send.images(['img1', 'img9'], trigger), /not available/);
+  const sent = await send.images(['img1'], trigger);
+  assert.equal(sent.sentMessages.length, 1);
+  assert.deepEqual(uploads[0].images, [image]);
+  assert.equal(uploads[0].payload.nonce, `${sent.batchId}:i`);
+  assert.deepEqual(uploads[0].payload.allowed_mentions, { parse: [] });
+});
+
+test('reply plans accept up to four deduplicated image handles', async () => {
+  const { validateReplyPlan } = await import('../src/proactive/reply-validation.mjs');
+  assert.deepEqual(validateReplyPlan({ shouldReply: true, messages: [], images: ['img1', 'img1', 'img2'] }, {}), { shouldReply: true, messages: [], images: ['img1', 'img2'] });
+  assert.equal(validateReplyPlan({ shouldReply: false, messages: [], images: ['img1'] }, {}).images, undefined);
+  assert.throws(() => validateReplyPlan({ shouldReply: true, messages: [], images: ['https://evil.example/x.png'] }, {}));
+  assert.throws(() => validateReplyPlan({ shouldReply: true, messages: [], images: ['img1', 'img2', 'img3', 'img4', 'img5'] }, {}));
+});
+
+test('the Discord client uploads only bounded, supported image types', async () => {
+  const { DiscordApiClient } = await import('../src/discord-api.mjs');
+  const bodies = [];
+  const client = new DiscordApiClient({ accountId: 'reader', token: 'mock-token', fetchImpl: async (url, options) => { bodies.push(options.body); return new Response(JSON.stringify({ id: '700000000000000001' }), { headers: { 'content-type': 'application/json' } }); } });
+  const png = Buffer.from('89504e470d0a1a0a', 'hex').toString('base64');
+  assert.throws(() => client.sendMessageImages('200000000000000001', {}, [{ name: 'x.svg', mimeType: 'image/svg+xml', data: png }]), /supported image type/);
+  assert.throws(() => client.sendMessageImages('200000000000000001', {}, [{ name: '../x.png', mimeType: 'image/png', data: png }]), /safe filename/);
+  assert.throws(() => client.sendMessageImages('200000000000000001', {}, []), /one to four/);
+  await client.sendMessageImages('200000000000000001', { nonce: 'n' }, [{ name: 'slide.png', mimeType: 'image/png', data: png }]);
+  assert.ok(bodies[0] instanceof FormData);
+  assert.equal(bodies[0].get('files[0]').type, 'image/png');
+  assert.equal(bodies[0].get('files[0]').size, 8);
+});

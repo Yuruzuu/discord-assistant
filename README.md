@@ -480,7 +480,10 @@ and similar) are always refused. The reply model never gets native app access;
 the listener calls tools on a hidden Codex thread that never runs model turns.
 Server conversations never see these tools. After app data is read, public link
 reading is blocked for the rest of that answer so private data cannot leak
-through a URL. Connect or disconnect apps in ChatGPT/Codex, and set
+through a URL. When an app returns an image (a Google Slides thumbnail, a Figma
+screenshot, or an image attachment from Gmail or Linear), Nova can post it in
+the DM. Live screenshots of Gmail, Drive or spreadsheet pages are not
+supported. Connect or disconnect apps in ChatGPT/Codex, and set
 `"apps": false` to turn the feature off.
 
 Restart the relevant listener and MCP client after editing global capability

@@ -84,6 +84,7 @@ The final JSON is parsed with a strict zod `planSchema`:
 | `reactions[]` | ≤ 3 | target must be one of the supplied conversation messages; emoji normalised; deduped |
 | `files[]` | ≤ 3 | safe basename, text, ≤ 128 KiB each, ≤ 256 KiB total (`discord-chunks.validateGeneratedFiles`) |
 | `forwards[]` | ≤ 5 | snowflake `channelId` and `messageId`; deduped by message. Scope is checked later at send time |
+| `images[]` | ≤ 4 | handles (`img<n>`) of images returned by connected-app tools in this answer, deduped. Unknown handles fail at send time |
 | `controls` | bool | `true` asks the host to attach the owner buttons to this reply. The model decides per answer, and it is dropped when `shouldReply` is false |
 
 A reply with `shouldReply: true` needs at least one message, file or forward.
@@ -92,7 +93,7 @@ If a published bubble differs from the final plan, the turn errors
 
 ## 7. Delivery (`engine.processBatch` → `reply-sender.mjs`)
 
-Order: **reactions → remaining (unstreamed) bubbles → files → forwards → owner buttons (only if `controls`).**
+Order: **reactions → remaining (unstreamed) bubbles → files → images → forwards → owner buttons (only if `controls`).**
 
 - **Native reply.** Only in servers, and only on the first bubble or chunk, when
   the batch has more than one message, the trigger is itself a reply, or newer
@@ -105,6 +106,7 @@ Order: **reactions → remaining (unstreamed) bubbles → files → forwards →
   | chunk *k* of bubble *n* | `<batchId>:<n>c<k>` | `<batchId>:<n>:text:<k>` |
   | progress *i* | `<batchId>:p<i>` | (not journaled) |
   | files | `<batchId>:f` | `<batchId>:files` |
+  | images | `<batchId>:i` | `<batchId>:images` |
   | forward *i* | `<batchId>:w<i>` | `<batchId>:forward:<i>` |
 
   Discord nonces are at most 25 characters, so keep suffixes short.

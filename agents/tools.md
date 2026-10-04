@@ -98,7 +98,11 @@ model turn, so the reply model never gets native app access.
 `isAllowedAppTool` permits only `readOnlyHint: true` tools that aren't marked
 `destructiveHint`, and refuses payment-related names (`paypal`, `invoice`,
 `billing`, …). After `apps_call_tool` runs, `web_read_link` refuses for the rest
-of the turn (`readTools.beginTurn()` resets it each turn).
+of the turn (`readTools.beginTurn()` resets it each turn). Images in app results
+(PNG, JPEG, WebP or GIF) are kept host-side as per-turn handles (`img1`…, at
+most 12). The model may list them in the reply plan's `images`, and the sender
+uploads them through `sendMessageImages` (≤ 4, 8 MiB each, 20 MiB total). Live
+screenshots of web UIs are not supported.
 
 `readTools.forwardSource({channelId, messageId})` is **not** a model tool. The
 reply sender uses it to scope-check Nova's planned forwards with the same rules.
