@@ -75,7 +75,9 @@ These are summarised here. The full list is in
    readable. The same check (`read-tools.mjs`) applies to anything Nova forwards.
 3. **Nova never writes on its own.** The model returns a JSON *reply plan*. The
    host validates it (`reply-validation.mjs`) and only then sends. Worker tools
-   are read-only.
+   are read-only. Posting outside the current conversation (`channelMessages`)
+   is owner-DM-only, limited to server text channels, blocked after
+   connected-app reads, and confirmed back to the owner.
 4. **No duplicate sends.** Every send uses a nonce with `enforce_nonce`. Nova
    journals deliveries (`delivery-journal.mjs`). Failed sends are never retried
    automatically after an unknown outcome.

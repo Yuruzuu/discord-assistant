@@ -10,7 +10,7 @@ tests that cover it. Tool details are in [tools.md](tools.md).
 | Multi-account bots and discovery | all tools; `discord_list_servers` | `config.mjs`, `service.mjs` (`discoverServers`, `resolveGuild`, `resolveChannel`) | `config`, `service`, `network-recovery` |
 | Channel tree and tickets | `discord_list_channels`, `discord_list_tickets` | `service.mjs` (`listChannels`, `listTickets`) | `service`, `request-optimization` |
 | Read by URL or IDs (with images) | `discord_read`, legacy aliases | `service.mjs` (`read`, `imageContent`), `shapes.mjs` | `service`, `server` |
-| Search and context browsing | `discord_search_messages`, `discord_message_context`, `discord_browse_messages` | `search.mjs`, `message-browser.mjs`, `read-tool-registry.mjs` | `search-browser`, `read-tool-registry` |
+| Search and context browsing | `discord_search_messages`, `discord_search_batch`, `discord_message_context`, `discord_browse_messages` | `search.mjs`, `message-browser.mjs`, `read-tool-registry.mjs` | `search-browser`, `search-batch`, `read-tool-registry` |
 | Image fetch | `discord_fetch_attachment` | `service.mjs` (`fetchAttachment`), `discord-api.mjs` (`fetchImage`) | `service`, `discord-api` |
 | Access diagnostics | `discord_check_access` | `service.mjs` (`checkAccess`) | `service` |
 | Profiles and members | `discord_user_info`, `discord_find_members` | `users.mjs`, `read-tool-registry.mjs` | `replies-users` |
@@ -36,7 +36,8 @@ tests that cover it. Tool details are in [tools.md](tools.md).
 | **Connected apps (Gmail, Drive, GitHub, Linear, …), read-only** | owner DM tool calls `apps_list_tools`, `apps_call_tool`; `nova.json` `apps` | `connected-apps.mjs`, `read-tools.mjs`, `channel-runtime.mjs` | `connected-apps` |
 | Share app images (Slides thumbnails, Figma screenshots, image attachments) | reply plan `images` with handles from `apps_call_tool` results | `read-tools.mjs` (`shareableImages`, `sharedImage`), `reply-sender.mjs` (`images`), `discord-api.sendMessageImages` | `connected-apps` |
 | Scoped read tools during a turn | model tool calls | `read-tools.mjs`, `read-tool-registry.mjs` | `proactive-read-tools` |
-| Progress messages for tool activity | tool events | `progress.mjs` | `proactive-progress` |
+| Progress messages for tool activity, in assistant voice with sanitized arguments ("I'm currently searching #x for 'y' and found N results") | tool events with `arguments` | `progress.mjs`, `conversation.callTool` | `proactive-progress` |
+| **Post in other channels from the owner DM** | reply plan `channelMessages` (≤ 3) | `reply-validation.mjs`, `read-tools.sendTarget`, `reply-sender.mjs` (`channelMessages`, `confirmation`), `engine.mjs` | `channel-messages` |
 | Images and voice notes in context | attachments | `context-media.mjs`, `voice-transcriber.mjs` | `proactive-context-tools`, `voice-transcriber` |
 | Owner memory | `remember this …`, `show memory`, `consolidate memory`, Remember button | `memory.mjs`, `memory-commands.mjs` | `memory` |
 | Controls | `nova <action>` text, `/nova` slash command, buttons (reply buttons only when the plan sets `controls`), `discord_nova_control` | `controls.mjs`, `engine.mjs` (`control`), `channel-runtime.mjs` (`control`), `daemon-controls.mjs` | `nova-controls`, `codex-runtime-controls` |

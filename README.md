@@ -105,6 +105,7 @@ that file; `tokenEnv` is an environment variable name, not a token.
 | `discord_list_tickets` | Find forum posts, threads, and optionally text-channel tickets with parent/category/name/time filters. |
 | `discord_read` | Read a message/channel URL or IDs, auto-select the bot with access, and inline image attachments. |
 | `discord_search_messages` | Search indexed server messages and return up to 250 matches with links and continuation arguments. |
+| `discord_search_batch` | Run up to 10 keyword/channel/author searches at once (three at a time, one small page each) and get deduplicated, compact hits with per-search continuations. |
 | `discord_find_members` | Resolve server usernames and nicknames to author IDs. |
 | `discord_research_topic` | Collect bounded topic matches, nearby context and source links. |
 | `web_read_link` | Read public HTTP(S) text with private-address and redirect controls. |
@@ -299,10 +300,20 @@ a few short bubbles.
 
 Nova writes like a conversational assistant: plain sentences and short
 paragraphs, with headings, bold emphasis and bullet lists kept for content that
-genuinely needs them. It refers to channels as `<#channelId>` and people as
+genuinely needs them. While it works, its progress message says what it is doing
+in plain words, such as "I'm currently searching #balancing for messages with
+"fate" and found 25 results." It refers to channels as `<#channelId>` and people as
 `<@userId>` using IDs from the messages and tool results it has seen; these render
 as clickable names and never notify anyone, because Nova sends with mentions
 disabled.
+
+From the owner DM, you can ask Nova to post in a server channel or thread ("tell
+Hand good job in #av-slop-chat"). It posts at most three messages per reply,
+only to server text channels and threads the bot can access, and pings only
+the users named in the message, and only when you ask. Roles, @everyone and
+@here never ping. Nova refuses to post after reading your connected apps in the
+same answer, and the host confirms each post, or explains a failure, in your
+DM.
 
 Nova can choose up to three emoji reactions to supplied messages in the current
 conversation, with or without a written answer. Unicode emoji are unrestricted;

@@ -14,7 +14,7 @@ becomes an `isError` result with structured `error` fields: `nonce` and
 for batches. Tools are read-only by default (`readOnlyHint: true`), and write
 tools spread `writeAnnotations`.
 
-## MCP tools (34)
+## MCP tools (35)
 
 R = read-only, W = write. The **Schema** column says where the input schema is
 defined.
@@ -28,6 +28,7 @@ defined.
 | `discord_list_tickets` | R | `service.listTickets` | `server.mjs` |
 | `discord_read` | R | `service.read` (images as MCP image content) | `server.mjs` |
 | `discord_search_messages` | R | `search.mjs` `searchMessages` | `read-tool-registry` |
+| `discord_search_batch` | R | `search.mjs` `searchMessagesBatch`: ≤ 10 variants, 3 concurrent, deduped compact hits | `read-tool-registry` (registered from `read-tools`) |
 | `discord_message_context` | R | `message-browser.mjs` (anchor required) | `read-tool-registry` |
 | `discord_browse_messages` | R | `message-browser.mjs` `browseMessages` | `read-tool-registry` |
 | `discord_fetch_attachment` | R | `service.fetchAttachment` (Discord CDN image hosts only) | `server.mjs` |
@@ -79,7 +80,7 @@ exposes the full field sets.
 | Tool | Server conversation | Owner DM |
 | --- | --- | --- |
 | `discord_list_servers` | own server only (filtered) | all servers |
-| `discord_list_channels`, `discord_find_members`, `discord_search_messages`, `discord_user_info`, `discord_research_topic` | own guild only | any guild |
+| `discord_list_channels`, `discord_find_members`, `discord_search_messages`, `discord_search_batch`, `discord_user_info`, `discord_research_topic` | own guild only | any guild |
 | `discord_message_context`, `discord_browse_messages` | channels in own guild | any guild channel + this owner DM |
 | `web_read_link` | if `settings.web !== false` | same |
 | `project_list` / `project_search` / `project_read_file` | never | if `projectRoots` configured |
@@ -104,7 +105,7 @@ most 12). The model may list them in the reply plan's `images`, and the sender
 uploads them through `sendMessageImages` (≤ 4, 8 MiB each, 20 MiB total). Live
 screenshots of web UIs are not supported.
 
-`readTools.forwardSource({channelId, messageId})` is **not** a model tool. The
+`readTools.forwardSource({channelId, messageId})` and `readTools.sendTarget(channelId)` are **not** model tools. `sendTarget` gates `channelMessages`: owner DM only, server text channels and threads only, refused after connected-app reads in the turn. The
 reply sender uses it to scope-check Nova's planned forwards with the same rules.
 
 ## Changing a tool

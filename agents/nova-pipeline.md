@@ -85,6 +85,7 @@ The final JSON is parsed with a strict zod `planSchema`:
 | `files[]` | ≤ 3 | safe basename, text, ≤ 128 KiB each, ≤ 256 KiB total (`discord-chunks.validateGeneratedFiles`) |
 | `forwards[]` | ≤ 5 | snowflake `channelId` and `messageId`; deduped by message. Scope is checked later at send time |
 | `images[]` | ≤ 4 | handles (`img<n>`) of images returned by connected-app tools in this answer, deduped. Unknown handles fail at send time |
+| `channelMessages[]` | ≤ 3 | `{channelId, content ≤ 2000, notify}`. **Owner DM only** (otherwise the turn fails). The target is checked at send time by `readTools.sendTarget` |
 | `controls` | bool | `true` asks the host to attach the owner buttons to this reply. The model decides per answer, and it is dropped when `shouldReply` is false |
 
 A reply with `shouldReply: true` needs at least one message, file or forward.
@@ -93,7 +94,7 @@ If a published bubble differs from the final plan, the turn errors
 
 ## 7. Delivery (`engine.processBatch` → `reply-sender.mjs`)
 
-Order: **reactions → remaining (unstreamed) bubbles → files → images → forwards → owner buttons (only if `controls`).**
+Order: **reactions → remaining (unstreamed) bubbles → files → images → channel posts + host confirmation → forwards → owner buttons (only if `controls`).**
 
 - **Native reply.** Only in servers, and only on the first bubble or chunk, when
   the batch has more than one message, the trigger is itself a reply, or newer
@@ -107,6 +108,8 @@ Order: **reactions → remaining (unstreamed) bubbles → files → images → f
   | progress *i* | `<batchId>:p<i>` | (not journaled) |
   | files | `<batchId>:f` | `<batchId>:files` |
   | images | `<batchId>:i` | `<batchId>:images` |
+  | channel post *i* | `<batchId>:x<i>` | `<batchId>:channel:<i>` |
+  | post confirmation | `<batchId>:k` | `<batchId>:confirmation` |
   | forward *i* | `<batchId>:w<i>` | `<batchId>:forward:<i>` |
 
   Discord nonces are at most 25 characters, so keep suffixes short.
@@ -114,6 +117,12 @@ Order: **reactions → remaining (unstreamed) bubbles → files → images → f
   it is reused. An `unknown` status refuses to resend: the owner inspects it
   with `nova deliveries` and resolves it with `nova resolve-delivery`. The
   journal records `rejected` and `unknown` outcomes from `error.sendStatus`.
+- **Channel posts.** Each `channelMessages` item goes through `sendTarget`, then
+  `sendResolvedMessage` into the target channel. With `notify`, only `<@id>`
+  users found in the content are pinged (`allowed_mentions.users`, max 5).
+  Journal entries use the DM channel ID as metadata. The engine then sends a
+  host-written confirmation ("Posted in <#…>: link" or "I couldn't post…") to
+  the DM, and a failure still fails the turn.
 - **Forwards.** Each source goes through `forwardSource`
   (`readTools.forwardSource`, which uses the same scope rules as reading). The
   sender then calls `messaging.forwardResolvedMessage`. Forwards land only in

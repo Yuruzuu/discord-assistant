@@ -39,12 +39,12 @@ The owner ID for fixtures is `directMessageOwnerId` from
 | --- | --- |
 | Config, URL, concurrency | `config`, `discord-url`, `concurrency` |
 | REST client and resilience | `discord-api`, `network-recovery`, `request-optimization` |
-| Service and reading | `service`, `server`, `search-browser`, `read-tool-registry` |
-| Sending | `messaging`, `replies-users`, `reactions`, `forwarding` |
+| Service and reading | `service`, `server`, `search-browser`, `search-batch`, `read-tool-registry` |
+| Sending | `messaging`, `replies-users`, `reactions`, `forwarding`, `channel-messages` |
 | MCP surface and packaging | `stdio`, `plugin` |
 | Nova engine and replies | `proactive-engine`, `reply-stream`, `reply-sender`, `reply-controls`, `discord-experience`, `proactive-progress`, `typing` |
 | Nova Codex integration | `app-server`, `codex-responder`, `codex-runtime-controls` |
-| Nova tools and context | `proactive-read-tools`, `proactive-context-tools`, `voice-transcriber` |
+| Nova tools and context | `proactive-read-tools`, `proactive-context-tools`, `connected-apps`, `voice-transcriber` |
 | Nova runtime and listeners | `channel-runtime-integration`, `direct-messages`, `server-mentions`, `gateway-recovery` |
 | Nova control plane | `proactive-controller`, `proactive-supervisor`, `nova-controls`, `state-writer` |
 | Nova persistence and jobs | `delivery-journal`, `memory`, `research-jobs`, `proactive-digests` |

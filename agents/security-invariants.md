@@ -35,6 +35,8 @@ needs to relax one, stop and ask the human first.
 | --- | --- |
 | The model has no write tools. It can only return a reply plan, which the host validates and executes | `read-tools` (read-only registry), `reply-validation.mjs`, `engine.mjs` |
 | The Codex child has no approvals, no environments, an ephemeral working directory, and an allow-listed environment (no Discord tokens) | `conversation.mjs` turn params, `worker-environment.responderEnvironment` |
+| Posting outside the current conversation is owner DM only, limited to server text channels and threads, at most 3 per reply, refused after connected-app data was read in the turn, and confirmed back to the owner by host-written text | `reply-validation.mjs`, `read-tools.sendTarget`, `engine.mjs` |
+| Progress messages show only sanitized tool arguments (no mention or markup characters, hostnames only for links, basenames only for files), never model reasoning, results or raw errors | `progress.mjs` |
 | GIFs, stickers and custom emoji must come from the supplied catalog. Reactions may target only supplied conversation messages | `reply-validation.mjs` |
 | Generated files are in-memory text only, with safe basenames and size caps. They never come from the local filesystem | `discord-chunks.validateGeneratedFiles`, `discord-api.sendMessageFiles` |
 | Turn, tool-call and repeated-failure budgets are bounded | `conversation.mjs` |
@@ -46,7 +48,7 @@ needs to relax one, stop and ask the human first.
 | Every send has a nonce with `enforce_nonce: true`. Batches derive deterministic nonces | `messaging.mjs`, `reply-sender.mjs` |
 | An error with an unknown outcome (5xx or network) is marked `sendStatus: 'unknown'` and **never auto-retried** | `messaging.postMessage`, `discord-api.mjs` |
 | Nova journals each operation. An `unknown` entry blocks resending until the owner resolves it | `delivery-journal.mjs`, `reply-sender.deliver`, `channel-runtime` (`retry`) |
-| Mentions are disabled unless the MCP caller sets `allowMentions`. Nova never pings | `allowed_mentions.parse: []` |
+| Mentions are disabled unless the MCP caller sets `allowMentions`. Nova never pings, except users mentioned in a `channelMessages` post the owner asked to notify. Roles and @everyone never ping | `allowed_mentions.parse: []`, `reply-sender.channelMessages` (`users` list) |
 | MCP write tools are annotated `readOnlyHint: false`, and tool descriptions say "only use when explicitly asked" | `server.mjs`, `tool-results.writeAnnotations` |
 
 ## Secrets and local control
