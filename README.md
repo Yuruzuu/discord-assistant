@@ -237,9 +237,25 @@ DM and server threads are separate. Stopping/restarting a listener discards its
 ephemeral conversation; approved memory survives independently.
 
 Shell, plugin, hook, web-search and external MCP tools are disabled in the worker.
-It receives no Discord token and uses a temporary, read-only permission profile.
+The host supplies seven read-only Discord tools for server/channel discovery,
+member-name lookup, message search, surrounding context, history browsing and
+user profiles. Owner DMs can research any server the bot can access; server
+conversations can read only their own server. No worker can read other private
+conversations or send outside its reply conversation. Searches support up to
+250 matches and continuation pages; context reads preserve message links.
+The host handles Discord credentials and validates every tool call. The worker
+receives no Discord token and uses a temporary, read-only permission profile.
 That profile is only an in-memory worker override; it does not edit Codex's
 global configuration. The implementation is validated with Codex CLI 0.160.0.
+
+Important reading actions produce short activity messages, such as “i’m
+searching the Discord chats now” or “i’m reading the surrounding messages for
+context.” These reflect actual tool calls, with at most three updates per reply,
+throttling and duplicate suppression. They stop once the answer starts. Progress
+messages have separate nonces and do not use up final reply bubbles or alter the
+first answer's native reply. Ordinary chat sends no progress filler. Raw internal
+reasoning, tool arguments and message contents are never used as activity text.
+Status reports `progressMessages`, `progressErrors` and `lastFirstActivityMs`.
 
 Complete reply bubbles are validated and sent as the model streams them. The
 first bubble gives a short useful answer; later bubbles add details. Raw partial
