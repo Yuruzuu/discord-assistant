@@ -157,20 +157,25 @@ test('batch searches and app calls read like an assistant, and argument text can
 test('the progress log edits each step from doing to done, defers throttled edits, and ends as a one-sentence summary', async () => {
   const sent = [];
   const edits = [];
-  const progress = createProgressReporter({ intervalMs: 30,
+  let clock = 0;
+  const progress = createProgressReporter({ intervalMs: 30, now: () => clock,
     send: async (content) => { sent.push(content); return { sentMessages: [{ message: { id: 'message' } }] }; },
     edit: async (_, content, signal, options) => { edits.push({ content, options }); } });
   await progress.receive({ stage: 'started', toolName: 'apps_list_tools', callId: 'a', arguments: {} });
+  clock = 1;
   await progress.receive({ stage: 'started', toolName: 'apps_call_tool', callId: 'b', arguments: { tool: 'gmail.search_emails' } });
+  clock = 2;
   await progress.receive({ stage: 'started', toolName: 'apps_call_tool', callId: 'c', arguments: { tool: 'google_drive.search' } });
+  clock = 3;
   await progress.receive({ stage: 'completed', toolName: 'apps_list_tools', callId: 'a', arguments: {} });
   assert.deepEqual(sent, ['I’m checking what your connected apps can do.']);
   assert.equal(edits.length, 0, 'edits inside the throttle window are deferred');
-  await wait(60);
+  await wait(80);
   assert.equal(edits.at(-1).content, 'I’ve checked your connected apps.\nI’m checking your Gmail.\nI’m checking your Google Drive.', 'the deferred edit catches up instead of being dropped');
+  clock = 100;
   await progress.receive({ stage: 'completed', toolName: 'apps_call_tool', callId: 'c', arguments: { tool: 'google_drive.search' } });
   assert.equal(edits.at(-1).content, 'I’ve checked your connected apps.\nI’m checking your Gmail.\nI’ve checked your Google Drive.', 'parallel calls of one tool are matched by call ID');
-  await wait(40);
+  clock = 200;
   await progress.receive({ stage: 'completed', toolName: 'apps_call_tool', callId: 'b', arguments: { tool: 'gmail.search_emails' } });
   await progress.receive({ stage: 'started', toolName: 'discord_search_messages', callId: 'd', arguments: { query: 'fate', channelIds: ['200000000000000001'] } });
   await progress.receive({ stage: 'failed', toolName: 'discord_search_messages', callId: 'd', arguments: { query: 'fate', channelIds: ['200000000000000001'] } });
