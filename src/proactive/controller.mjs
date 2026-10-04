@@ -1,20 +1,20 @@
 import { spawn, spawnSync } from 'node:child_process';
 import { randomBytes, randomUUID } from 'node:crypto';
-import { closeSync, openSync } from 'node:fs';
+import { closeSync, openSync, existsSync } from 'node:fs';
 import { open, readdir, rm, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { join, dirname } from 'node:path';
 import { setTimeout as wait } from 'node:timers/promises';
 import { assertSnowflake } from '../discord-url.mjs';
 import { ensureStateRoot, listenerTargetPaths, readState, writeState, proactiveRoot } from './state.mjs';
 import { assertOwnerDirectMessageChannel, directMessageOwnerId } from './target.mjs';
 import { replyDefaults } from './reply-defaults.mjs';
 
-async function controlRequest(configuration, method = 'GET', route = '/status') {
+async function controlRequest(configuration, method = 'GET', route = '/status', body) {
   const url = new URL(configuration.controlUrl);
   if (url.protocol !== 'http:' || url.hostname !== '127.0.0.1') throw new Error('Invalid listener control address');
   const response = await fetch(new URL(route, url), {
-    method, headers: { Authorization: `Bearer ${configuration.controlToken}` }, signal: AbortSignal.timeout(3000),
+    method, headers: { Authorization: `Bearer ${configuration.controlToken}`, ...(body ? { 'Content-Type': 'application/json' } : {}) }, ...(body ? { body: JSON.stringify(body) } : {}), signal: AbortSignal.timeout(body ? 20000 : 3000), redirect: 'error',
   });
   if (!response.ok) throw new Error(`Listener control request failed (${response.status})`);
   const status = await response.json();
@@ -40,8 +40,10 @@ export function createProactiveController(service, { entrypoint = process.env.DI
     const configuration = await readState(paths.configuration);
     if (!configuration) return { running: false, state: 'not-started', accountId: account.id, channelId, ownerUserId: directMessageOwnerId, ...(directMessages ? { directMessages: true } : {}), ...(allServers ? { allServers: true } : {}) };
     const saved = await readState(paths.status);
+    const supervision = await readState(`${paths.configuration}.supervision.json`);
+    const supervising = supervision?.enabled && processExists(supervision.pid);
     const pid = configuration.pid || saved?.pid;
-    if (pid && !processExists(pid)) return { ...(saved || {}), running: false, state: saved?.state === 'failed' ? 'failed' : 'stopped' };
+    if (pid && !processExists(pid)) return { ...(saved || {}), running: Boolean(supervising), state: supervising ? 'recovering' : saved?.state === 'failed' ? 'failed' : 'stopped', ...(supervising ? { supervision } : {}) };
     if (!configuration.controlUrl) return { ...(saved || {}), running: false, state: pid && !processExists(pid) ? 'failed' : saved?.state || 'starting' };
     try { return await controlRequest(configuration); }
     catch (error) {
@@ -130,7 +132,10 @@ export function createProactiveController(service, { entrypoint = process.env.DI
     const log = openSync(paths.log, 'a', 0o600);
     let child;
     try {
-      child = spawnImpl(process.execPath, [entrypoint, paths.configuration], { detached: true, stdio: ['ignore', log, log], env: process.env });
+      const supervisor = join(dirname(entrypoint), entrypoint.endsWith('.cjs') ? 'supervisor.cjs' : 'supervisor.mjs');
+      const supervised = existsSync(supervisor);
+      if (supervised) await writeState(`${paths.configuration}.supervision.json`, { enabled: true });
+      child = spawnImpl(process.execPath, supervised ? [supervisor, entrypoint, paths.configuration] : [entrypoint, paths.configuration], { detached: true, stdio: ['ignore', log, log], env: process.env });
       await new Promise((resolve, reject) => { child.once('spawn', resolve); child.once('error', reject); });
       const latestStatus = await readState(paths.status);
       await writeState(paths.status, { ...latestStatus, pid: child.pid });
@@ -174,7 +179,14 @@ export function createProactiveController(service, { entrypoint = process.env.DI
     const account = accountForId(accountId);
     const paths = targetPaths(account.id, channelId, directMessages, allServers);
     const configuration = await readState(paths.configuration);
+    const supervision = await readState(`${paths.configuration}.supervision.json`);
+    if (supervision) await writeState(`${paths.configuration}.supervision.json`, { ...supervision, enabled: false });
     if (!configuration?.controlUrl) {
+      if (supervision?.pid && processExists(supervision.pid)) {
+        for (let attempt = 0; attempt < 40 && processExists(supervision.pid); attempt += 1) await wait(250);
+        if (processExists(supervision.pid)) throw new Error('Supervisor shutdown is still in progress');
+        return { running: false, state: 'stopped', ownerUserId: directMessageOwnerId };
+      }
       const current = await status({ channelId, accountId: account.id, directMessages, allServers });
       if (current.state === 'starting') throw new Error('The listener is still starting; retry stop shortly');
       return { ...current, alreadyStopped: true };
@@ -187,5 +199,12 @@ export function createProactiveController(service, { entrypoint = process.env.DI
     }
   }
 
-  return { start, stop, status };
+  async function control({ channelId, accountId, directMessages = false, allServers = false, ...request }) {
+    const account = accountForId(accountId);
+    const configuration = await readState(targetPaths(account.id, directMessages ? undefined : channelId, directMessages, allServers).configuration);
+    if (!configuration?.controlUrl) throw new Error('This Nova listener is not active');
+    return controlRequest(configuration, 'POST', '/control', { ...request, ...(channelId ? { channelId } : {}), userId: directMessageOwnerId });
+  }
+
+  return { start, stop, status, control };
 }

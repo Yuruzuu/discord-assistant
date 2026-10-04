@@ -10,7 +10,7 @@ const runtimeRoot = join(pluginRoot, 'runtime');
 await mkdir(runtimeRoot, { recursive: true });
 const result = await build({
   absWorkingDir: repositoryRoot,
-  entryPoints: { server: 'index.mjs', proactive: 'src/proactive/daemon.mjs' },
+  entryPoints: { server: 'index.mjs', proactive: 'src/proactive/daemon.mjs', supervisor: 'src/proactive/supervisor.mjs' },
   outdir: runtimeRoot,
   outExtension: { '.js': '.cjs' },
   bundle: true,
