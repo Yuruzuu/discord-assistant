@@ -83,12 +83,22 @@ exposes the full field sets.
 | `discord_message_context`, `discord_browse_messages` | channels in own guild | any guild channel + this owner DM |
 | `web_read_link` | if `settings.web !== false` | same |
 | `project_list` / `project_search` / `project_read_file` | never | if `projectRoots` configured |
+| `apps_list_tools` / `apps_call_tool` | never | if `nova.json` `apps !== false` (default on). Read-only connected-app tools only |
 | `read_tool_result` | always | always |
 
 Worker schemas are narrower than MCP schemas (`readToolFields(name, scope)`): no
 `accountId`, smaller search limits, and a required `guildId` for user info.
 Results larger than `maxResultBytes` (128 KiB by default) are truncated and
 paged through `read_tool_result` handles (10-minute expiry, 8 kept).
+
+**Connected apps** (`connected-apps.mjs`). These tools are owner DM only and
+never registered on the MCP surface. The host calls `mcpServer/tool/call` on
+the `codex_apps` server of a hidden, apps-enabled Codex thread that never runs a
+model turn, so the reply model never gets native app access.
+`isAllowedAppTool` permits only `readOnlyHint: true` tools that aren't marked
+`destructiveHint`, and refuses payment-related names (`paypal`, `invoice`,
+`billing`, …). After `apps_call_tool` runs, `web_read_link` refuses for the rest
+of the turn (`readTools.beginTurn()` resets it each turn).
 
 `readTools.forwardSource({channelId, messageId})` is **not** a model tool. The
 reply sender uses it to scope-check Nova's planned forwards with the same rules.

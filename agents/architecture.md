@@ -158,6 +158,7 @@ See [nova-pipeline.md](nova-pipeline.md) for the detailed lifecycle.
 | `progress.mjs`, `typing.mjs` | Tool-activity progress messages, typing indicator |
 | `read-tools.mjs` | Nova's scope-checked read-only tool set (+ `forwardSource`) and result paging |
 | `read-tool-registry.mjs` | Shared schemas and implementations for read tools used by both MCP and Nova |
+| `connected-apps.mjs` | Read-only bridge to the owner's Codex/ChatGPT connected apps through a hidden apps-enabled Codex thread (`mcpServer/tool/call`) |
 | `link-reader.mjs` | Public-only web reader (blocks private addresses and credentials) |
 | `project-tools.mjs` | Read-only access to approved project roots (owner DM only) |
 | `memory.mjs`, `memory-commands.mjs` | Owner-approved per-conversation memory file and commands |
