@@ -13,10 +13,11 @@ function fixture(options = {}) {
   return { progress, sent, advance: (amount) => { timestamp += amount; } };
 }
 
-test('real tool actions produce fixed summaries without exposing model text or arguments', async () => {
+test('real tool actions describe their sanitized arguments without exposing model text or results', async () => {
   const { progress, sent } = fixture();
-  await progress.receive({ stage: 'started', toolName: 'discord_search_messages', summary: 'private reasoning', arguments: { query: 'private query' }, result: 'private messages' });
-  assert.deepEqual(sent, [{ content: 'i’m searching the Discord chats now.', index: 0 }]);
+  await progress.receive({ stage: 'started', toolName: 'discord_search_messages', summary: 'private reasoning', arguments: { query: 'fate buff', channelIds: ['200000000000000001'], authorIds: ['400000000000000001'] }, result: 'private messages' });
+  assert.deepEqual(sent, [{ content: 'I’m currently searching <#200000000000000001> for messages with "fate buff" from <@400000000000000001>.', index: 0 }]);
+  assert.ok(!JSON.stringify(sent).includes('private'));
   for (const toolName of ['reasoning', 'shell', 'constructor', '__proto__']) await progress.receive({ stage: 'started', toolName });
   await progress.receive({ stage: 'reasoning', toolName: 'discord_search_messages' });
   assert.equal(sent.length, 1);
@@ -38,7 +39,7 @@ test('progress deduplicates activities, throttles repeated tool work and limits 
   assert.deepEqual(sent.map((entry) => entry.index), [0, 1, 2]);
   assert.match(sent[0].content, /servers/);
   assert.match(sent[1].content, /searching/);
-  assert.match(sent[2].content, /surrounding/);
+  assert.match(sent[2].content, /conversation around that message/);
   progress.close();
 });
 
@@ -50,14 +51,15 @@ test('only a completed longer search reports its result count', async () => {
   advance(5000);
   await progress.receive({ stage: 'completed', toolName: 'discord_search_messages', resultCount: 1 });
   await progress.receive({ stage: 'completed', toolName: 'discord_search_messages', resultCount: 50 });
-  assert.deepEqual(sent.map((entry) => entry.content), ['i’m searching the Discord chats now.', 'the Discord search finished; i found 1 matching message.']);
+  assert.deepEqual(sent.map((entry) => entry.content), ['I’m currently searching the server for messages.', 'I’m currently searching the server for messages and found 1 result.']);
   progress.close();
 });
 
 test('failed lookups show a factual failure without disclosing raw errors', async () => {
   const { progress, sent } = fixture();
   await progress.receive({ stage: 'failed', toolName: 'discord_search_messages', error: 'secret credential error' });
-  assert.deepEqual(sent.map((entry) => entry.content), ['that Discord lookup failed; i don’t have those results yet.']);
+  assert.deepEqual(sent.map((entry) => entry.content), ['That search didn’t go through, so I don’t have those results yet.']);
+  assert.ok(!JSON.stringify(sent).includes('secret'));
   progress.close();
 });
 
@@ -105,16 +107,16 @@ test('listener and individual turn cancellation prevent progress sends', async (
   }
 });
 
-test('preparation and approved research tools expose fixed factual activities without raw arguments', async () => {
+test('preparation and approved research tools describe activities without model text, links with credentials or raw paths', async () => {
   const names = ['voice_transcribe', 'image_read', 'reply_context', 'web_read_link', 'project_list', 'project_search', 'project_read_file', 'discord_research_topic', 'read_tool_result'];
   for (const toolName of names) {
     const sent = [];
     const edits = [];
     const progress = createProgressReporter({ send: async (content) => { sent.push(content); return { sentMessages: [{ message: { id: 'message' } }] }; }, edit: async (_, content) => { edits.push(content); } });
-    await progress.receive({ stage: 'started', toolName, arguments: { path: 'private filename', query: 'private query', url: 'credential link' }, summary: 'private reasoning' });
+    await progress.receive({ stage: 'started', toolName, arguments: { file: '/Users/owner/secret-dir/notes.md', query: 'roadmap', url: 'https://user:token@docs.example.com/private?key=1' }, summary: 'private reasoning' });
     assert.equal(sent.length, 1, toolName);
-    assert.match(sent[0], /^i’m /);
-    assert.ok(!JSON.stringify([...sent, ...edits, ...progress.details()]).includes('private'));
+    assert.match(sent[0], /^I’m /);
+    assert.ok(!/private|secret-dir|token|key=1|user:/.test(JSON.stringify([...sent, ...edits, ...progress.details()])), toolName);
     assert.equal(progress.details()[0].toolName, toolName);
     progress.close();
   }
@@ -126,8 +128,26 @@ test('owner cancellation edits an existing activity to stopped and never reports
   const progress = createProgressReporter({ send: async () => ({ sentMessages: [{ message: { id: 'message' } }] }), edit: async (_, content) => { edits.push(content); }, remove: async () => { removed = true; } });
   await progress.receive({ stage: 'started', toolName: 'project_search' });
   await progress.finish({ cancelled: true });
-  assert.deepEqual(edits, ['stopped this answer.']);
+  assert.deepEqual(edits, ['Stopped this answer.']);
   assert.equal(removed, false);
   await progress.receive({ stage: 'completed', toolName: 'project_search', resultCount: 5 });
-  assert.deepEqual(edits, ['stopped this answer.']);
+  assert.deepEqual(edits, ['Stopped this answer.']);
+});
+
+test('batch searches and app calls read like an assistant, and argument text cannot inject mentions or markup', async () => {
+  const lines = [];
+  const progress = createProgressReporter({ send: async (content) => { lines.push(content); return { sentMessages: [{ message: { id: 'message' } }] }; }, edit: async (_, content) => { lines.push(content); }, intervalMs: 0 });
+  const searches = [{ query: 'fate' }, { query: 'hero bow', channelIds: ['200000000000000002'] }, { query: 'crimson moon' }, { query: 'nerf' }];
+  await progress.receive({ stage: 'started', toolName: 'discord_search_batch', arguments: { guildId: '100000000000000001', channelIds: ['200000000000000001'], searches } });
+  await progress.receive({ stage: 'completed', toolName: 'discord_search_batch', arguments: { guildId: '100000000000000001', channelIds: ['200000000000000001'], searches }, resultCount: 42 });
+  assert.deepEqual(lines, [
+    'I’m currently searching <#200000000000000001> and <#200000000000000002> for 4 keywords: "fate", "hero bow", "crimson moon" and 1 more.',
+    'I searched <#200000000000000001> and <#200000000000000002> for 4 keywords: "fate", "hero bow", "crimson moon" and 1 more and found 42 results.',
+  ]);
+  await progress.receive({ stage: 'started', toolName: 'apps_call_tool', arguments: { tool: 'google_drive.get_spreadsheet_cells' } });
+  assert.equal(lines.at(-1), 'I’m checking your Google Drive.');
+  await progress.receive({ stage: 'started', toolName: 'discord_search_messages', arguments: { query: '@everyone <@&123456789012345678> **bold**\nline', channelIds: ['not-a-channel'] } });
+  assert.equal(lines.at(-1), 'I’m currently searching the server for messages with "everyone &123456789012345678 bold line".');
+  assert.ok(!/[@<>*]/.test(lines.at(-1).replace(/<#\d+>|<@\d+>/g, '')));
+  progress.close();
 });

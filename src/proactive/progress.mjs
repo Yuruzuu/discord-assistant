@@ -1,21 +1,53 @@
+const snowflake = /^\d{17,20}$/;
+const appNames = { gmail: 'Gmail', google_drive: 'Google Drive', github: 'GitHub', linear: 'Linear', figma: 'Figma', chatgpt_space: 'ChatGPT Space', sites: 'Sites' };
+// Progress text quotes model-chosen arguments, so strip anything that could become mentions, markup or extra lines.
+const quote = (value) => `"${String(value).replace(/[\r\n`*_~|<>@#]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 60)}"`;
+const plural = (count, word) => `${count} ${word}${count === 1 ? '' : 's'}`;
+function listed(items, render, limit = 3) {
+  const shown = items.slice(0, limit).map(render);
+  if (items.length > limit) shown.push(`${items.length - limit} more`);
+  return shown.length > 1 ? `${shown.slice(0, -1).join(', ')} and ${shown.at(-1)}` : shown[0] || '';
+}
+const ids = (values) => [...new Set((Array.isArray(values) ? values : []).filter((value) => snowflake.test(value)))];
+const where = (channelIds) => (ids(channelIds).length ? listed(ids(channelIds), (id) => `<#${id}>`) : 'the server');
+const from = (authorIds) => (ids(authorIds).length ? ` from ${listed(ids(authorIds), (id) => `<@${id}>`, 2)}` : '');
+const found = (count, word = 'result') => (Number.isSafeInteger(count) ? ` and found ${plural(count, word)}` : '');
+function searchSubject(args = {}) {
+  const query = typeof args.query === 'string' && args.query.trim() ? ` with ${quote(args.query)}` : '';
+  return `${where(args.channelIds)} for messages${query}${from(args.authorIds)}`;
+}
+function batchSubject(args = {}) {
+  const searches = Array.isArray(args.searches) ? args.searches : [];
+  const queries = searches.map((search) => search?.query).filter((query) => typeof query === 'string' && query.trim());
+  const channels = [...(args.channelIds || []), ...searches.flatMap((search) => search?.channelIds || [])];
+  return `${where(channels)} for ${queries.length ? `${plural(queries.length, 'keyword')}: ${listed(queries, quote)}` : plural(searches.length, 'search')}`;
+}
+const appName = (tool) => { const app = String(tool || '').split('.')[0]; return appNames[app] || app.replace(/_/g, ' ').replace(/\b\w/g, (letter) => letter.toUpperCase()) || 'connected apps'; };
+const host = (url) => { try { return new URL(url).hostname; } catch { return 'that link'; } };
+const filename = (file) => quote(String(file || 'that file').split(/[\\/]/).at(-1));
+
 const activities = {
-  discord_list_servers: { category: 'servers', content: 'i’m checking the Discord servers i can access.' },
-  discord_list_channels: { category: 'channels', content: 'i’m finding the relevant Discord channels.' },
-  discord_find_members: { category: 'members', content: 'i’m looking up the matching Discord members.' },
-  discord_search_messages: { category: 'search', content: 'i’m searching the Discord chats now.' },
-  discord_message_context: { category: 'context', content: 'i’m reading the surrounding messages for context.' },
-  discord_browse_messages: { category: 'context', content: 'i’m reading more of the Discord conversation.' },
-  discord_user_info: { category: 'profile', content: 'i’m checking that Discord profile.' },
-  voice_transcribe: { category: 'voice transcription', content: 'i’m transcribing your voice note.' },
-  image_read: { category: 'images', content: 'i’m loading the attached images.' },
-  reply_context: { category: 'reply context', content: 'i’m loading the message you replied to.' },
-  web_read_link: { category: 'linked page', content: 'i’m reading that linked page.' },
-  project_list: { category: 'projects', content: 'i’m checking the approved projects.' },
-  project_search: { category: 'project search', content: 'i’m searching the approved project files.' },
-  project_read_file: { category: 'project file', content: 'i’m reading that approved project file.' },
-  discord_research_topic: { category: 'topic research', content: 'i’m researching that topic in the Discord discussions.' },
-  read_tool_result: { category: 'stored results', content: 'i’m reviewing more of the tool results.' },
+  discord_list_servers: { category: 'servers', start: () => 'I’m checking which servers I can see.', done: (_, count) => (Number.isSafeInteger(count) ? `I can see ${plural(count, 'server')}.` : 'I’ve checked the servers I can see.') },
+  discord_list_channels: { category: 'channels', start: () => 'I’m looking through the server’s channels.', done: (_, count) => (Number.isSafeInteger(count) ? `I found ${plural(count, 'channel')} and threads to look through.` : 'I’ve looked through the server’s channels.') },
+  discord_find_members: { category: 'members', start: (args) => `I’m looking up members matching ${quote(args?.query || '')}.`, done: (args, count) => `I looked up members matching ${quote(args?.query || '')}${found(count, 'match')}.` },
+  discord_search_messages: { category: 'search', start: (args) => `I’m currently searching ${searchSubject(args)}.`, done: (args, count) => `I’m currently searching ${searchSubject(args)}${found(count)}.` },
+  discord_search_batch: { category: 'search', start: (args) => `I’m currently searching ${batchSubject(args)}.`, done: (args, count) => `I searched ${batchSubject(args)}${found(count)}.` },
+  discord_message_context: { category: 'context', start: (args) => `I’m reading the conversation around that message${snowflake.test(args?.channelId) ? ` in <#${args.channelId}>` : ''}.`, done: (_, count) => (Number.isSafeInteger(count) ? `I’ve read ${plural(count, 'message')} around it.` : 'I’ve read the surrounding conversation.') },
+  discord_browse_messages: { category: 'context', start: (args) => `I’m reading more of ${snowflake.test(args?.channelId) ? `<#${args.channelId}>` : 'the conversation'}.`, done: (args, count) => `I’ve read ${Number.isSafeInteger(count) ? plural(count, 'message') : 'more messages'}${snowflake.test(args?.channelId) ? ` from <#${args.channelId}>` : ''}.` },
+  discord_user_info: { category: 'profile', start: (args) => `I’m checking ${snowflake.test(args?.userId) ? `<@${args.userId}>’s` : 'that'} profile.`, done: (args) => `I’ve checked ${snowflake.test(args?.userId) ? `<@${args.userId}>’s` : 'that'} profile.` },
+  discord_research_topic: { category: 'topic research', start: (args) => `I’m researching ${quote(args?.query || '')} across the server’s discussions.`, done: (args) => `I’ve gathered what people said about ${quote(args?.query || '')}.` },
+  voice_transcribe: { category: 'voice transcription', start: () => 'I’m transcribing your voice note.', done: () => 'I’ve transcribed your voice note.' },
+  image_read: { category: 'images', start: () => 'I’m looking at the images you sent.', done: () => 'I’ve looked at the images.' },
+  reply_context: { category: 'reply context', start: () => 'I’m loading the message you replied to.', done: () => 'I’ve loaded the message you replied to.' },
+  web_read_link: { category: 'linked page', start: (args) => `I’m reading ${host(args?.url)}.`, done: (args) => `I’ve read ${host(args?.url)}.` },
+  apps_list_tools: { category: 'connected apps', start: (args) => `I’m checking what ${args?.app ? `your ${appName(args.app)}` : 'your connected apps'} can do.`, done: (args) => `I’ve checked ${args?.app ? `your ${appName(args.app)}` : 'your connected apps'}.` },
+  apps_call_tool: { category: 'connected app', start: (args) => `I’m checking your ${appName(args?.tool)}.`, done: (args) => `I’ve checked your ${appName(args?.tool)}.` },
+  project_list: { category: 'projects', start: () => 'I’m checking your approved projects.', done: () => 'I’ve checked your approved projects.' },
+  project_search: { category: 'project search', start: (args) => `I’m searching your project files for ${quote(args?.query || '')}.`, done: (args, count) => `I searched your project files for ${quote(args?.query || '')}${found(count, 'match')}.` },
+  project_read_file: { category: 'project file', start: (args) => `I’m reading ${filename(args?.file)} from your project.`, done: (args) => `I’ve read ${filename(args?.file)}.` },
+  read_tool_result: { category: 'stored results', start: () => 'I’m going through the rest of those results.', done: () => 'I’ve gone through more of those results.' },
 };
+const failedText = (activity) => (activity.category === 'search' ? 'That search didn’t go through, so I don’t have those results yet.' : 'That lookup didn’t work, so I don’t have those results yet.');
 
 export function createProgressReporter({ send, edit, remove, signal, now = Date.now, intervalMs = 1500, maxMessages = 3, onSent = () => {}, onError = () => {} }) {
   const cancellation = new AbortController();
@@ -39,9 +71,9 @@ export function createProgressReporter({ send, edit, remove, signal, now = Date.
     const resultCount = Number.isSafeInteger(event.resultCount) && event.resultCount >= 0 ? event.resultCount : undefined;
     details.push({ toolName: event.toolName, stage: event.stage, elapsedMs, ...(resultCount === undefined ? {} : { resultCount }) });
     if (details.length > 50) details.shift();
-    let content = activity.content;
-    if (event.stage === 'completed') content = `finished ${activity.category}${resultCount === undefined ? '' : `; found ${resultCount} ${resultCount === 1 ? 'result' : 'results'}`}${elapsedMs >= 1000 ? ` (${Math.round(elapsedMs / 1000)}s)` : ''}.`;
-    if (event.stage === 'failed') content = 'that lookup failed; i don’t have those results yet.';
+    let content = activity.start(event.arguments);
+    if (event.stage === 'completed') content = activity.done(event.arguments, resultCount);
+    if (event.stage === 'failed') content = failedText(activity);
     if (content === displayed || (event.stage !== 'failed' && receipt && timestamp - lastEditAt < intervalMs && !(event.stage === 'completed' && activity.category === 'search'))) return;
     if (!receipt && attempted >= maxMessages) return;
     const sendSignal = AbortSignal.any([cancellation.signal, signal, deliverySignal].filter(Boolean));
@@ -63,14 +95,12 @@ export function createProgressReporter({ send, edit, remove, signal, now = Date.
     const identity = `${event.stage}:${activity.category}`;
     if (seen.has(identity)) return;
 
-    let content = activity.content;
+    let content = activity.start(event.arguments);
     if (event.stage === 'started') startedAt.set(activity.category, timestamp);
     else if (event.stage === 'completed') {
       if (activity.category !== 'search' || !startedAt.has('search') || timestamp - startedAt.get('search') < 5000) return;
-      content = Number.isSafeInteger(event.resultCount) && event.resultCount >= 0
-        ? `the Discord search finished; i found ${event.resultCount} matching ${event.resultCount === 1 ? 'message' : 'messages'}.`
-        : 'the Discord search finished.';
-    } else content = 'that Discord lookup failed; i don’t have those results yet.';
+      content = activity.done(event.arguments, Number.isSafeInteger(event.resultCount) && event.resultCount >= 0 ? event.resultCount : undefined);
+    } else content = failedText(activity);
 
     const firstSearch = event.stage === 'started' && activity.category === 'search';
     if (timestamp - lastAttemptAt < intervalMs && !firstSearch) return;
@@ -101,10 +131,10 @@ export function createProgressReporter({ send, edit, remove, signal, now = Date.
       await queued;
       if (!receipt || finishSignal?.aborted) return;
       try {
-        if (cancelled) await edit?.(receipt, 'stopped this answer.', finishSignal);
-        else if (failed) await edit?.(receipt, 'that answer stopped before it finished. use /nova status for details or try again.', finishSignal);
+        if (cancelled) await edit?.(receipt, 'Stopped this answer.', finishSignal);
+        else if (failed) await edit?.(receipt, 'This answer stopped before it finished. Use /nova status for details or try again.', finishSignal);
         else if (remove) await remove(receipt, finishSignal);
-        else await edit?.(receipt, 'finished checking.', finishSignal);
+        else await edit?.(receipt, 'Finished checking.', finishSignal);
       } catch (error) { if (!finishSignal?.aborted) onError(error); }
     },
   };
