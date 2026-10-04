@@ -12,7 +12,7 @@ export function createProactiveEngine({ botUserId, guildId, channelId, directMes
   const seen = new Set();
   const replyTimes = [];
   const cancellation = new AbortController();
-  const statistics = { received: 0, triggered: 0, replyBatches: 0, sentMessages: 0, streamedMessages: 0, progressMessages: 0, progressErrors: 0, forwards: 0, reactions: 0, reactionErrors: 0, lastReactionError: null, lastFirstResponseMs: null, lastFirstActivityMs: null, skipped: 0, errors: 0, queued: 0, lastError: null };
+  const statistics = { received: 0, triggered: 0, replyBatches: 0, sentMessages: 0, streamedMessages: 0, progressMessages: 0, progressErrors: 0, forwards: 0, channelMessages: 0, reactions: 0, reactionErrors: 0, lastReactionError: null, lastFirstResponseMs: null, lastFirstActivityMs: null, skipped: 0, errors: 0, queued: 0, lastError: null };
   let busy = false;
   let stopped = false;
   let lastReplyAt = -Infinity;
@@ -172,6 +172,21 @@ export function createProactiveEngine({ botUserId, guildId, channelId, directMes
       if (response.images?.length) {
         const shown = await sendReplies.images(response.images, trigger, signal);
         statistics.sentMessages += shown.sentMessages.length;
+      }
+      if (response.channelMessages?.length) {
+        // The host, not the model, confirms cross-channel posts in the DM so the owner always sees exactly what went out.
+        let posted = [];
+        let failure;
+        try { posted = (await sendReplies.channelMessages(response.channelMessages, trigger, signal)).sentMessages; }
+        catch (error) { failure = error; posted = error.sentMessages || []; }
+        statistics.channelMessages += posted.length;
+        const lines = posted.map((receipt) => `Posted in <#${receipt.message.channelId}>: ${receipt.message.url}`);
+        if (failure) lines.push(`I couldn’t post in <#${response.channelMessages[failure.failedMessageIndex ?? posted.length]?.channelId}>: ${String(failure.message).slice(0, 300)}`);
+        if (lines.length) {
+          const confirmed = await sendReplies.confirmation(lines.join('\n'), trigger, signal);
+          statistics.sentMessages += confirmed.sentMessages.length;
+        }
+        if (failure) throw failure;
       }
       if (response.forwards?.length) {
         const forwarded = await sendReplies.forwards(response.forwards, trigger, signal);

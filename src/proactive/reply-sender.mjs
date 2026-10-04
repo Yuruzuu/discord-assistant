@@ -4,7 +4,7 @@ import { normalizeReactionEmoji } from '../reactions.mjs';
 import { splitDiscordText, validateGeneratedFiles } from './discord-chunks.mjs';
 import { shapeMessage } from '../shapes.mjs';
 
-export function createReplySender(service, { guildId, channelId, listenerId, directMessages = false, deliveryJournal, progressComponents, messageComponents, forwardSource = async () => { throw new Error('Forwarding is unavailable in this conversation'); }, sharedImage = () => null }) {
+export function createReplySender(service, { guildId, channelId, listenerId, directMessages = false, deliveryJournal, progressComponents, messageComponents, forwardSource = async () => { throw new Error('Forwarding is unavailable in this conversation'); }, sharedImage = () => null, sendTarget = async () => { throw new Error('Posting in other channels is unavailable in this conversation'); } }) {
   let currentTrigger;
   let resolution;
   const temporaryReactions = new Map();
@@ -154,6 +154,41 @@ export function createReplySender(service, { guildId, channelId, listenerId, dir
       return { accountId: target.account.id, nonce, message: shapeMessage({ ...message, channel_id: channelId, guild_id: guildId }) };
     }, { channelId, triggerMessageId: trigger.id, nonce });
     rememberFirstReply(trigger, receipt);
+    return { batchId, sentMessages: [receipt] };
+  };
+
+  send.channelMessages = async (items, trigger, signal) => {
+    if (!items?.length) return { sentMessages: [] };
+    if (items.length > 3) throw new Error('Provide at most 3 channel messages');
+    const batchId = batchIdFor(trigger);
+    const sentMessages = [];
+    let failedMessageIndex = 0;
+    try {
+      for (const [index, item] of items.entries()) {
+        failedMessageIndex = index;
+        signal?.throwIfAborted();
+        const target = await sendTarget(item.channelId, signal);
+        const nonce = `${batchId}:x${index}`;
+        const mentionUserIds = item.notify ? [...new Set([...item.content.matchAll(/<@!?(\d{17,20})>/g)].map((match) => match[1]))].slice(0, 5) : [];
+        sentMessages.push(await deliver(`${batchId}:channel:${index}`, () => sendResolvedMessage(target, {
+          channelId: target.channel.id, guildId: target.channel.guild_id, content: item.content, mentionUserIds, nonce,
+        }, signal), { channelId, triggerMessageId: trigger.id, nonce }));
+      }
+    } catch (error) {
+      error.batchId = batchId;
+      error.sentMessages = sentMessages;
+      error.failedMessageIndex = failedMessageIndex;
+      throw error;
+    }
+    return { batchId, sentMessages };
+  };
+
+  send.confirmation = async (content, trigger, signal) => {
+    signal?.throwIfAborted();
+    const target = await resolve(trigger);
+    const batchId = batchIdFor(trigger);
+    const nonce = `${batchId}:k`;
+    const receipt = await deliver(`${batchId}:confirmation`, () => sendResolvedMessage(target, { channelId, guildId, content: content.slice(0, 2000), nonce }, signal), { channelId, triggerMessageId: trigger.id, nonce });
     return { batchId, sentMessages: [receipt] };
   };
 

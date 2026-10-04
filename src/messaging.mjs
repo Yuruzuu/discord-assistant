@@ -68,7 +68,7 @@ async function postMessage(account, channelId, payload, signal) {
   }
 }
 
-export async function sendResolvedMessage({ account, channel }, { guildId, channelId, content, stickerIds = [], gifUrl, replyToMessageId, mentionRepliedUser = false, allowMentions = false, nonce }, signal) {
+export async function sendResolvedMessage({ account, channel }, { guildId, channelId, content, stickerIds = [], gifUrl, replyToMessageId, mentionRepliedUser = false, allowMentions = false, mentionUserIds = [], nonce }, signal) {
   const messageContent = validateMessage({ content, stickerIds, gifUrl, replyToMessageId, mentionRepliedUser, nonce });
   signal?.throwIfAborted();
   const messageNonce = nonce ?? randomBytes(12).toString('hex');
@@ -78,6 +78,7 @@ export async function sendResolvedMessage({ account, channel }, { guildId, chann
     ...(replyToMessageId ? { message_reference: { message_id: replyToMessageId, channel_id: channelId, fail_if_not_exists: true } } : {}),
     allowed_mentions: {
       parse: allowMentions ? ['users', 'roles', 'everyone'] : [],
+      ...(!allowMentions && mentionUserIds.length ? { users: mentionUserIds.slice(0, 10) } : {}),
       ...(replyToMessageId ? { replied_user: mentionRepliedUser } : {}),
     },
     nonce: messageNonce,

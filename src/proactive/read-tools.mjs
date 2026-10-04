@@ -42,6 +42,16 @@ export function createDiscordReadTools(service, scope, options = {}) {
     return { ...source, guildId: target.channel.guild_id || null };
   }
 
+  // Posting elsewhere is an owner-DM-only action, limited to server text channels and threads, and refused once private app data was read this turn.
+  async function sendTarget(channelId) {
+    if (scope.trustedLocal || !scope.directMessages) throw new Error('Only the owner DM can ask Nova to post in other channels');
+    if (appDataRead) throw new Error('Nova will not post to other channels after reading connected-app data in the same answer');
+    if (!/^\d{17,20}$/.test(channelId || '')) throw new Error('Choose a valid channel');
+    const target = await service.resolveChannel(channelId);
+    if (!target.channel.guild_id || ![0, 5, 10, 11, 12].includes(target.channel.type)) throw new Error('Nova can only post in server text channels and threads');
+    return target;
+  }
+
   // Forwards reuse the reading scope: a server conversation can only forward from its own server, and only the owner DM can reach other servers.
   async function forwardSource({ channelId, messageId }) {
     const source = await channelSource({ channelId, messageId });
@@ -214,5 +224,5 @@ export function createDiscordReadTools(service, scope, options = {}) {
     return text.slice(0, 500);
   }
 
-  return { definitions: [...tools.values()].map((tool) => tool.spec), registry: [...tools.values()], has: (name) => tools.has(name), call, errorMessage, forwardSource, sharedImage: (handle) => shareableImages.get(handle) || null, beginTurn: () => { appDataRead = false; shareableImages.clear(); } };
+  return { definitions: [...tools.values()].map((tool) => tool.spec), registry: [...tools.values()], has: (name) => tools.has(name), call, errorMessage, forwardSource, sendTarget, sharedImage: (handle) => shareableImages.get(handle) || null, beginTurn: () => { appDataRead = false; shareableImages.clear(); } };
 }

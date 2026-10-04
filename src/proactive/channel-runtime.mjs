@@ -47,7 +47,7 @@ export async function createChannelRuntime(service, configuration, bot, { warm =
       parseCommand: (message) => parseMemoryCommand(message, bot.id),
       handleCommands: createMemoryCommandHandler(memory, bot.id, (messageId) => client.getMessage(channel.id, messageId)),
       startTyping: (signal) => startTypingIndicator((typingSignal) => client.triggerTyping(channel.id, { signal: typingSignal }), { signal }),
-      generateReply, sendReplies: createReplySender(service, { ...configuration, listenerId: `${account.id}:${channel.id}`, deliveryJournal: journal, progressComponents, messageComponents, forwardSource: readTools.forwardSource, sharedImage: readTools.sharedImage }),
+      generateReply, sendReplies: createReplySender(service, { ...configuration, listenerId: `${account.id}:${channel.id}`, deliveryJournal: journal, progressComponents, messageComponents, forwardSource: readTools.forwardSource, sharedImage: readTools.sharedImage, sendTarget: readTools.sendTarget }),
       onStatus, onControl,
       onBatchComplete: async (messages, outcome) => {
         for (const message of messages) {
