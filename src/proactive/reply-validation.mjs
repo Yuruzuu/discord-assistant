@@ -7,7 +7,8 @@ const messageSchema = z.object({
   stickerIds: z.array(z.string().regex(/^\d{17,20}$/)).max(3),
 }).strict();
 const reactionSchema = z.object({ messageId: z.string().regex(/^\d{17,20}$/), emoji: z.string().min(1).max(100) }).strict();
-const planSchema = z.object({ shouldReply: z.boolean(), messages: z.array(messageSchema).max(5), reactions: z.array(reactionSchema).max(3).default([]), files: z.array(z.object({ name: z.string(), content: z.string() }).strict()).max(3).default([]) }).strict();
+const forwardSchema = z.object({ channelId: z.string().regex(/^\d{17,20}$/), messageId: z.string().regex(/^\d{17,20}$/) }).strict();
+const planSchema = z.object({ shouldReply: z.boolean(), messages: z.array(messageSchema).max(5), reactions: z.array(reactionSchema).max(3).default([]), forwards: z.array(forwardSchema).max(5).default([]), files: z.array(z.object({ name: z.string(), content: z.string() }).strict()).max(3).default([]) }).strict();
 
 export function createReplyValidator(context) {
   const allowedGifs = new Set(context.allowedGifUrls || []);
@@ -37,8 +38,9 @@ export function createReplyValidator(context) {
       return [`${reaction.messageId}:${emoji}`, { ...reaction, emoji }];
     })).values()];
     if (!parsed.shouldReply) return { shouldReply: false, messages: [], ...(reactions.length ? { reactions } : {}) };
-    if (!parsed.messages.length && !files.length) throw new Error('Codex chose to reply without providing any messages');
-    return { shouldReply: parsed.shouldReply, messages: parsed.messages.map(validateParsedMessage), ...(reactions.length ? { reactions } : {}), ...(files.length ? { files } : {}) };
+    const forwards = [...new Map(parsed.forwards.map((forward) => [forward.messageId, forward])).values()];
+    if (!parsed.messages.length && !files.length && !forwards.length) throw new Error('Codex chose to reply without providing any messages');
+    return { shouldReply: parsed.shouldReply, messages: parsed.messages.map(validateParsedMessage), ...(reactions.length ? { reactions } : {}), ...(files.length ? { files } : {}), ...(forwards.length ? { forwards } : {}) };
   }
 
   return { message, plan };

@@ -40,6 +40,12 @@ export function createDiscordReadTools(service, scope, options = {}) {
     return { ...source, guildId: target.channel.guild_id || null };
   }
 
+  // Forwards reuse the reading scope: a server conversation can only forward from its own server, and only the owner DM can reach other servers.
+  async function forwardSource({ channelId, messageId }) {
+    const source = await channelSource({ channelId, messageId });
+    return { guildId: source.guildId || null, channelId: source.channelId, messageId: source.messageId };
+  }
+
   register('discord_list_servers', 'Find server IDs by name. Owner DMs can discover bot-accessible servers; server conversations see only their own server. Discovery errors do not mean there are zero servers.', {}, async (args) => {
     const result = await executeSharedReadTool(service, 'discord_list_servers', args);
     if (scope.directMessages) return result;
@@ -162,5 +168,5 @@ export function createDiscordReadTools(service, scope, options = {}) {
     return text.slice(0, 500);
   }
 
-  return { definitions: [...tools.values()].map((tool) => tool.spec), registry: [...tools.values()], has: (name) => tools.has(name), call, errorMessage };
+  return { definitions: [...tools.values()].map((tool) => tool.spec), registry: [...tools.values()], has: (name) => tools.has(name), call, errorMessage, forwardSource };
 }

@@ -11,7 +11,7 @@ export function createProactiveEngine({ botUserId, guildId, channelId, directMes
   const seen = new Set();
   const replyTimes = [];
   const cancellation = new AbortController();
-  const statistics = { received: 0, triggered: 0, replyBatches: 0, sentMessages: 0, streamedMessages: 0, progressMessages: 0, progressErrors: 0, reactions: 0, reactionErrors: 0, lastReactionError: null, lastFirstResponseMs: null, lastFirstActivityMs: null, skipped: 0, errors: 0, queued: 0, lastError: null };
+  const statistics = { received: 0, triggered: 0, replyBatches: 0, sentMessages: 0, streamedMessages: 0, progressMessages: 0, progressErrors: 0, forwards: 0, reactions: 0, reactionErrors: 0, lastReactionError: null, lastFirstResponseMs: null, lastFirstActivityMs: null, skipped: 0, errors: 0, queued: 0, lastError: null };
   let busy = false;
   let stopped = false;
   let lastReplyAt = -Infinity;
@@ -162,6 +162,11 @@ export function createProactiveEngine({ botUserId, guildId, channelId, directMes
       if (response.files?.length) {
         const attached = await sendReplies.files(response.files, trigger, signal, { replyToMessageId: streamed || sent.sentMessages.length ? undefined : replyToMessageId });
         statistics.sentMessages += attached.sentMessages.length;
+      }
+      if (response.forwards?.length) {
+        const forwarded = await sendReplies.forwards(response.forwards, trigger, signal);
+        statistics.forwards += forwarded.sentMessages.length;
+        statistics.sentMessages += forwarded.sentMessages.length;
       }
       statistics.replyBatches += 1;
       statistics.sentMessages += sent.sentMessages.length;

@@ -1,10 +1,10 @@
 import { createHash } from 'node:crypto';
-import { sendResolvedMessage } from '../messaging.mjs';
+import { forwardResolvedMessage, sendResolvedMessage } from '../messaging.mjs';
 import { normalizeReactionEmoji } from '../reactions.mjs';
 import { splitDiscordText, validateGeneratedFiles } from './discord-chunks.mjs';
 import { shapeMessage } from '../shapes.mjs';
 
-export function createReplySender(service, { guildId, channelId, listenerId, directMessages = false, deliveryJournal, progressComponents, messageComponents }) {
+export function createReplySender(service, { guildId, channelId, listenerId, directMessages = false, deliveryJournal, progressComponents, messageComponents, forwardSource = async () => { throw new Error('Forwarding is unavailable in this conversation'); } }) {
   let currentTrigger;
   let resolution;
   const temporaryReactions = new Map();
@@ -131,6 +131,32 @@ export function createReplySender(service, { guildId, channelId, listenerId, dir
     }, { channelId, triggerMessageId: trigger.id, nonce });
     await attachMessageComponents(target, trigger, receipt, signal);
     return { batchId, sentMessages: [receipt] };
+  };
+
+  send.forwards = async (forwards, trigger, signal) => {
+    if (!forwards?.length) return { sentMessages: [] };
+    if (forwards.length > 5) throw new Error('Provide at most 5 forwards');
+    signal?.throwIfAborted();
+    const target = await resolve(trigger);
+    const batchId = createHash('sha256').update(`${listenerId}:${trigger.id}`).digest('hex').slice(0, 20);
+    const sentMessages = [];
+    let failedMessageIndex = 0;
+    try {
+      for (const [index, forward] of forwards.entries()) {
+        failedMessageIndex = index;
+        signal?.throwIfAborted();
+        const source = await forwardSource(forward, signal);
+        const nonce = `${batchId}:w${index}`;
+        sentMessages.push(await deliver(`${batchId}:forward:${index}`, () => forwardResolvedMessage(target, { guildId, channelId, source, nonce }, signal), { channelId, triggerMessageId: trigger.id, nonce }));
+      }
+    } catch (error) {
+      error.batchId = batchId;
+      error.sentMessages = sentMessages;
+      error.failedMessageIndex = failedMessageIndex;
+      throw error;
+    }
+
+    return { batchId, sentMessages };
   };
 
   async function updateStatusReaction(stage, trigger, signal) {
