@@ -14,7 +14,7 @@ becomes an `isError` result with structured `error` fields: `nonce` and
 for batches. Tools are read-only by default (`readOnlyHint: true`), and write
 tools spread `writeAnnotations`.
 
-## MCP tools (35)
+## MCP tools (36)
 
 R = read-only, W = write. The **Schema** column says where the input schema is
 defined.
@@ -28,6 +28,7 @@ defined.
 | `discord_list_tickets` | R | `service.listTickets` | `server.mjs` |
 | `discord_read` | R | `service.read` (images as MCP image content) | `server.mjs` |
 | `discord_search_messages` | R | `search.mjs` `searchMessages` | `read-tool-registry` |
+| `discord_read_activity` | R | `activity.mjs` `readServerActivity`: date-window history reader (skip idle channels by `last_message_id`, parallel `after=` paging, archived-thread discovery, compact transcripts, keyword filter, 10-minute cache, 20 s deadline) | `read-tool-registry` (registered from `read-tools`) |
 | `discord_search_batch` | R | `search.mjs` `searchMessagesBatch`: ≤ 10 variants, 3 concurrent, deduped compact hits | `read-tool-registry` (registered from `read-tools`) |
 | `discord_message_context` | R | `message-browser.mjs` (anchor required) | `read-tool-registry` |
 | `discord_browse_messages` | R | `message-browser.mjs` `browseMessages` | `read-tool-registry` |
@@ -80,7 +81,7 @@ exposes the full field sets.
 | Tool | Server conversation | Owner DM |
 | --- | --- | --- |
 | `discord_list_servers` | own server only (filtered) | all servers |
-| `discord_list_channels`, `discord_find_members`, `discord_search_messages`, `discord_search_batch`, `discord_user_info`, `discord_research_topic` | own guild only | any guild |
+| `discord_list_channels`, `discord_find_members`, `discord_search_messages`, `discord_search_batch`, `discord_read_activity`, `discord_user_info`, `discord_research_topic` | own guild only | any guild |
 | `discord_message_context`, `discord_browse_messages` | channels in own guild | any guild channel + this owner DM |
 | `web_read_link` | if `settings.web !== false` | same |
 | `project_list` / `project_search` / `project_read_file` | never | if `projectRoots` configured |

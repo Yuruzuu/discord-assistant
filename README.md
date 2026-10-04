@@ -12,7 +12,7 @@ images, voice notes, reactions, progress displays and owner controls.
 Reading uses Discord REST. Sending, reactions, progress edits and research-thread
 creation occur only when requested or within explicitly enabled conversations.
 The listener starts on demand; it does not auto-start with the operating system.
-Version 2.9.0 exposes 35 MCP tools, or 38 with approved project roots. Existing
+Version 2.9.0 exposes 36 MCP tools, or 39 with approved project roots. Existing
 MCP tool names and arguments remain compatible.
 
 ## Requirements
@@ -105,6 +105,7 @@ that file; `tokenEnv` is an environment variable name, not a token.
 | `discord_list_tickets` | Find forum posts, threads, and optionally text-channel tickets with parent/category/name/time filters. |
 | `discord_read` | Read a message/channel URL or IDs, auto-select the bot with access, and inline image attachments. |
 | `discord_search_messages` | Search indexed server messages and return up to 250 matches with links and continuation arguments. |
+| `discord_read_activity` | Read everything posted in a server (or chosen channels and their threads) today, yesterday, in the last N hours or a since/until window up to 7 days. Reads channel history directly, so it is complete and fresher than search; idle channels are skipped, recently archived threads are included, and results are compact per-channel transcripts with participants and an optional keyword filter. |
 | `discord_search_batch` | Run up to 10 keyword/channel/author searches at once (three at a time, one small page each) and get deduplicated, compact hits with per-search continuations. |
 | `discord_find_members` | Resolve server usernames and nicknames to author IDs. |
 | `discord_research_topic` | Collect bounded topic matches, nearby context and source links. |
@@ -306,6 +307,20 @@ in plain words, such as "I'm currently searching #balancing for messages with
 `<@userId>` using IDs from the messages and tool results it has seen; these render
 as clickable names and never notify anyone, because Nova sends with mentions
 disabled.
+
+For "what happened today" or "summarize the day in the dev server", Nova uses
+`discord_read_activity`, which works like DiscordChatExporter's date-bounded
+export. It turns the window into a snowflake, skips every channel whose last
+message is older, reads the rest in parallel (100 messages per request), and
+checks recently archived threads so a thread that auto-archived this afternoon
+is still included. It returns compact transcripts that keep the most recent
+lines when a day is too large, and it stops at a 20-second deadline with a
+partial result that names any quieter channels it skipped, rather than timing
+out. Recent reads are cached for ten minutes, so drilling into one channel
+right after an overview is nearly instant. `day: "today"` uses the owner time
+zone (`timeZone` in `nova.json`, otherwise the host's zone), and Nova writes
+dates and times as Discord timestamps (`<t:unix:f>`, `<t:unix:R>`) so they show
+in each reader's own time zone.
 
 From the owner DM, you can ask Nova to post in a server channel or thread ("tell
 Hand good job in #av-slop-chat"). It posts at most three messages per reply,
@@ -564,7 +579,7 @@ caller state or change the periodic contract.
 
 ## Request handling
 
-Each bot makes at most four concurrent network requests. Archived-thread scans
+Each bot makes at most ten concurrent network requests. Archived-thread scans
 run with bounded concurrency and preserve channel and warning order. Ticket
 category filters also limit which parents are scanned for archived threads.
 

@@ -44,6 +44,9 @@ How one owner message becomes Nova's reply. All modules are in `src/proactive/`.
   backend is configured), and forwarded snapshots (`forwardedMessages`,
   `forwardedMedia`). All of these are marked `untrustedContent`.
 - `approvedMemory` is the current memory file snapshot (`memory.mjs`).
+- `currentTime`, `currentUnix` and `ownerTimeZone` (from `nova.json` `timeZone`,
+  otherwise the host zone) let Nova resolve "today" and write `<t:unix:format>`
+  timestamps.
 
 ## 4. Codex turn (`conversation.mjs`)
 

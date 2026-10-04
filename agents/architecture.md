@@ -122,7 +122,8 @@ See [nova-pipeline.md](nova-pipeline.md) for the detailed lifecycle.
 | `tool-results.mjs` | `register` (wraps handlers, so errors become `failure()`), `success`, annotations |
 | `messaging.mjs` | `sendMessage`, `sendResolvedMessage`, `sendMessageBatch`, `forwardMessages`, `forwardResolvedMessage`, `listExpressions` |
 | `reactions.mjs` | Emoji normalisation and `addReaction` |
-| `search.mjs` | Paged guild message search (≤ 250 results, continuation args) |
+| `search.mjs` | Paged guild message search (≤ 250 results; pages after the first fetched three at a time) and `searchMessagesBatch` |
+| `activity.mjs` | `readServerActivity`: date-window channel-history reader for recent activity and day summaries, plus time-zone and day-boundary helpers |
 | `message-browser.mjs` | Context and browse windows with older/newer cursors |
 | `users.mjs` | Profile and member info |
 | `shapes.mjs` | Output shaping, including forwarded snapshots (`forwardedFrom`, `forwarded`) |

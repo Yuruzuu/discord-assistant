@@ -10,6 +10,7 @@ tests that cover it. Tool details are in [tools.md](tools.md).
 | Multi-account bots and discovery | all tools; `discord_list_servers` | `config.mjs`, `service.mjs` (`discoverServers`, `resolveGuild`, `resolveChannel`) | `config`, `service`, `network-recovery` |
 | Channel tree and tickets | `discord_list_channels`, `discord_list_tickets` | `service.mjs` (`listChannels`, `listTickets`) | `service`, `request-optimization` |
 | Read by URL or IDs (with images) | `discord_read`, legacy aliases | `service.mjs` (`read`, `imageContent`), `shapes.mjs` | `service`, `server` |
+| **Recent activity and day summaries** | `discord_read_activity` (`day`, `hours`, `since/until`, `keywords`, `channelIds`) | `activity.mjs`, `discord-api.listArchivedThreads` (`archivedAfter`) | `activity` |
 | Search and context browsing | `discord_search_messages`, `discord_search_batch`, `discord_message_context`, `discord_browse_messages` | `search.mjs`, `message-browser.mjs`, `read-tool-registry.mjs` | `search-browser`, `search-batch`, `read-tool-registry` |
 | Image fetch | `discord_fetch_attachment` | `service.mjs` (`fetchAttachment`), `discord-api.mjs` (`fetchImage`) | `service`, `discord-api` |
 | Access diagnostics | `discord_check_access` | `service.mjs` (`checkAccess`) | `service` |
@@ -30,6 +31,7 @@ tests that cover it. Tool details are in [tools.md](tools.md).
 | Trigger modes (`mentions` / `questions` / `all`) and batching | owner messages | `engine.mjs` (`receive`, `isQuestion`) | `proactive-engine` |
 | Streamed reply bubbles | model output | `reply-stream.mjs`, `conversation.mjs`, `engine.mjs` | `reply-stream`, `codex-responder` |
 | Native replies, chunking, generated text files | reply plan `messages`, `files` | `reply-sender.mjs`, `discord-chunks.mjs` | `reply-sender`, `discord-experience` |
+| Discord timestamps (`<t:unix:format>`) in replies | prompt rule plus Unix fields (`currentUnix`, transcript `[HH:MM|unix]`, `...Unix`, batch `unix`) | `reply-style.mjs`, `context.mjs`, `activity.mjs`, `search.mjs` | `activity` |
 | Owner reply buttons, attached when the model chooses | reply plan `controls` | `reply-style.mjs`, `reply-validation.mjs`, `reply-sender.mjs` (`controls`), `engine.mjs` | `reply-controls`, `reply-sender` |
 | Reactions (natural and status ⏳⚙️🔎✅⚠️⌛) | reply plan `reactions`; engine stages | `reply-sender.mjs` (`react`, `statusReaction`) | `reactions` |
 | **Forwards** | reply plan `forwards` (≤ 5), sent after bubbles and files | `reply-style.mjs`, `reply-validation.mjs`, `reply-sender.mjs` (`forwards`), `read-tools.mjs` (`forwardSource`) | `forwarding` |

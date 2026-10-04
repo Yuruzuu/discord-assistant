@@ -39,7 +39,7 @@ The owner ID for fixtures is `directMessageOwnerId` from
 | --- | --- |
 | Config, URL, concurrency | `config`, `discord-url`, `concurrency` |
 | REST client and resilience | `discord-api`, `network-recovery`, `request-optimization` |
-| Service and reading | `service`, `server`, `search-browser`, `search-batch`, `read-tool-registry` |
+| Service and reading | `service`, `server`, `search-browser`, `search-batch`, `activity`, `read-tool-registry` |
 | Sending | `messaging`, `replies-users`, `reactions`, `forwarding`, `channel-messages` |
 | MCP surface and packaging | `stdio`, `plugin` |
 | Nova engine and replies | `proactive-engine`, `reply-stream`, `reply-sender`, `reply-controls`, `discord-experience`, `proactive-progress`, `typing` |
