@@ -7,6 +7,7 @@ import { createReplySender } from './reply-sender.mjs';
 import { startTypingIndicator } from './typing.mjs';
 import { acceptsListenerMessage, assertOwnerDirectMessageChannel, directMessageOwnerId } from './target.mjs';
 import { createDiscordReadTools } from './read-tools.mjs';
+import { createConnectedApps } from './connected-apps.mjs';
 import { createVoiceTranscriber } from './voice-transcriber.mjs';
 import { createNovaSettings } from './nova-settings.mjs';
 import { createDeliveryJournal } from './delivery-journal.mjs';
@@ -28,9 +29,10 @@ export async function createChannelRuntime(service, configuration, bot, { warm =
   await memory.load();
   const journal = await createDeliveryJournal({ accountId: account.id, channelId: channel.id, ...(deliveryRoot || memoryRoot ? { root: deliveryRoot || join(memoryRoot, 'delivery') } : {}) });
   let generateReply;
+  const connectedApps = configuration.directMessages && settings.apps !== false ? createConnectedApps({ command: preferences.codexCommand || undefined }) : null;
   try {
     const requests = new Map();
-    const readTools = createDiscordReadTools(service, scope, settings);
+    const readTools = createDiscordReadTools(service, scope, { ...settings, connectedApps });
     generateReply = responderFactory({ command: preferences.codexCommand, model: preferences.model, reasoningEffort: preferences.reasoningEffort, serviceTier: preferences.serviceTier, timeoutMs: preferences.timeoutMs, toolTimeoutMs: preferences.toolTimeoutMs, maxToolCalls: preferences.maxToolCalls, scope, readTools, requireSubscription: responderFactory === createCodexResponder });
     if (warm) await generateReply.warmup();
     const transcribe = createVoiceTranscriber(settings.voice);
@@ -149,6 +151,6 @@ export async function createChannelRuntime(service, configuration, bot, { warm =
       } finally { requests.delete(intro.id); signal?.removeEventListener('abort', cancel); }
     }
 
-    return { receive, status, control, recover, request, close: async () => { engine.stop(); await generateReply.close(); await engine.idle(); await journal.close(); } };
-  } catch (error) { await generateReply?.close().catch(() => {}); await journal.close(); throw error; }
+    return { receive, status, control, recover, request, close: async () => { engine.stop(); await generateReply.close(); await engine.idle(); await connectedApps?.close(); await journal.close(); } };
+  } catch (error) { await generateReply?.close().catch(() => {}); await connectedApps?.close().catch(() => {}); await journal.close(); throw error; }
 }
