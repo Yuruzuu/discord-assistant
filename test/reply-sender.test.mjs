@@ -79,6 +79,9 @@ test('owner control decoration attaches once to the first confirmed source chunk
       await sender([{ content: 'another bubble' }], trigger, undefined, { offset: 1 });
     }
     await sender.files([{ name: 'notes.md', content: 'Research notes' }], trigger);
+    assert.equal(edits.length, 0, 'buttons are opt-in until the reply plan requests controls');
+    assert.equal(await sender.controls(trigger), true);
+    assert.equal(await sender.controls(trigger), false);
     assert.equal(cards.length, 1);
     assert.equal(edits.length, 1);
     assert.equal(edits[0].id, '400000000000000001');
@@ -98,6 +101,7 @@ test('component failures preserve confirmed receipts and cancellation skips opti
   const sender = createReplySender({ resolveChannel: async () => ({ channel: { id: channelId }, account: { id: 'default', client } }) }, { channelId, listenerId: 'fixture', messageComponents: () => [{ type: 1 }], progressComponents: () => [{ type: 1 }] });
   const result = await sender([{ content: 'confirmed answer' }], { id: '300000000000000001' });
   assert.equal(result.sentMessages.length, 1);
+  await sender.controls({ id: '300000000000000001' });
   const progress = await sender.progress('checking', { id: '300000000000000002' });
   assert.equal(progress.sentMessages.length, 1);
   assert.equal(posts, 2);
@@ -105,5 +109,6 @@ test('component failures preserve confirmed receipts and cancellation skips opti
   client.sendMessage = async (_, payload) => { posts += 1; cancellation.abort(); return { id: '400000000000000003', content: payload.content }; };
   const stopped = await sender([{ content: 'already confirmed when stopped' }], { id: '300000000000000003' }, cancellation.signal);
   assert.equal(stopped.sentMessages.length, 1);
+  assert.equal(await sender.controls({ id: '300000000000000003' }, cancellation.signal), false);
   assert.equal(edits, 2);
 });

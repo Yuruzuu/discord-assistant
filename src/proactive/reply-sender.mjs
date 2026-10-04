@@ -11,6 +11,7 @@ export function createReplySender(service, { guildId, channelId, listenerId, dir
   const naturalReactions = new Set();
   let reactionQueue = Promise.resolve();
   const componentCards = new Set();
+  const firstReplies = new Map();
 
   async function attachComponents(target, trigger, confirmed, signal, factory) {
     if (!factory || signal?.aborted) return;
@@ -21,11 +22,11 @@ export function createReplySender(service, { guildId, channelId, listenerId, dir
     } catch { /* Controls are optional decoration on an already confirmed message. */ }
   }
 
-  async function attachMessageComponents(target, trigger, confirmed, signal) {
-    if (!messageComponents || signal?.aborted || componentCards.has(trigger.id)) return;
-    componentCards.add(trigger.id);
-    if (componentCards.size > 1000) componentCards.delete(componentCards.values().next().value);
-    await attachComponents(target, trigger, confirmed, signal, messageComponents);
+  // Owner buttons are opt-in per reply: remember the first confirmed message and attach only when the final plan asks for controls.
+  function rememberFirstReply(trigger, confirmed) {
+    if (firstReplies.has(trigger.id)) return;
+    firstReplies.set(trigger.id, confirmed);
+    if (firstReplies.size > 1000) firstReplies.delete(firstReplies.keys().next().value);
   }
 
   async function deliver(operationId, operation, metadata) {
@@ -79,7 +80,7 @@ export function createReplySender(service, { guildId, channelId, listenerId, dir
             allowMentions: false, mentionRepliedUser: false, nonce,
           }, signal), { channelId, triggerMessageId: trigger.id, nonce });
           sentMessages.push(sent);
-          if (position === 0 && chunkIndex === 0) await attachMessageComponents(target, trigger, sent, signal);
+          if (position === 0 && chunkIndex === 0) rememberFirstReply(trigger, sent);
         }
       }
     } catch (error) {
@@ -133,8 +134,17 @@ export function createReplySender(service, { guildId, channelId, listenerId, dir
       } catch (error) { error.sendStatus = error.status && error.status < 500 ? 'rejected' : 'unknown'; throw error; }
       return { accountId: target.account.id, nonce, message: shapeMessage({ ...message, channel_id: channelId, guild_id: guildId }) };
     }, { channelId, triggerMessageId: trigger.id, nonce });
-    await attachMessageComponents(target, trigger, receipt, signal);
+    rememberFirstReply(trigger, receipt);
     return { batchId, sentMessages: [receipt] };
+  };
+
+  send.controls = async (trigger, signal) => {
+    const confirmed = firstReplies.get(trigger.id);
+    if (!messageComponents || !confirmed || signal?.aborted || componentCards.has(trigger.id)) return false;
+    componentCards.add(trigger.id);
+    if (componentCards.size > 1000) componentCards.delete(componentCards.values().next().value);
+    await attachComponents(await resolve(trigger), trigger, confirmed, signal, messageComponents);
+    return true;
   };
 
   send.forwards = async (forwards, trigger, signal) => {

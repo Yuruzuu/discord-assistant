@@ -23,7 +23,7 @@ export function createReplyStream(onMessage) {
       if (character === '"') { quoted = true; continue; }
       if (character === '[' && stack.length === 1) {
         const prefix = JSON.parse(buffer.slice(0, index) + '[]}');
-        if (Object.keys(prefix).some((key) => !['shouldReply', 'messages', 'reactions', 'files', 'forwards'].includes(key))) throw new Error('Codex emitted an unexpected reply field');
+        if (Object.keys(prefix).some((key) => !['shouldReply', 'messages', 'reactions', 'files', 'forwards', 'controls'].includes(key))) throw new Error('Codex emitted an unexpected reply field');
         messagesArray = Object.keys(prefix).at(-1) === 'messages';
         allowed = messagesArray && prefix.shouldReply === true;
       }

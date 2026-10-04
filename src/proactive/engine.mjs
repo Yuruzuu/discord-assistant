@@ -174,6 +174,7 @@ export function createProactiveEngine({ botUserId, guildId, channelId, directMes
         statistics.forwards += forwarded.sentMessages.length;
         statistics.sentMessages += forwarded.sentMessages.length;
       }
+      if (response.controls) await sendReplies.controls?.(trigger, signal);
       statistics.replyBatches += 1;
       statistics.sentMessages += sent.sentMessages.length;
       lastReplyAt = now();
