@@ -104,3 +104,30 @@ test('listener and individual turn cancellation prevent progress sends', async (
     progress.close();
   }
 });
+
+test('preparation and approved research tools expose fixed factual activities without raw arguments', async () => {
+  const names = ['voice_transcribe', 'image_read', 'reply_context', 'web_read_link', 'project_list', 'project_search', 'project_read_file', 'discord_research_topic', 'read_tool_result'];
+  for (const toolName of names) {
+    const sent = [];
+    const edits = [];
+    const progress = createProgressReporter({ send: async (content) => { sent.push(content); return { sentMessages: [{ message: { id: 'message' } }] }; }, edit: async (_, content) => { edits.push(content); } });
+    await progress.receive({ stage: 'started', toolName, arguments: { path: 'private filename', query: 'private query', url: 'credential link' }, summary: 'private reasoning' });
+    assert.equal(sent.length, 1, toolName);
+    assert.match(sent[0], /^i’m /);
+    assert.ok(!JSON.stringify([...sent, ...edits, ...progress.details()]).includes('private'));
+    assert.equal(progress.details()[0].toolName, toolName);
+    progress.close();
+  }
+});
+
+test('owner cancellation edits an existing activity to stopped and never reports successful completion', async () => {
+  const edits = [];
+  let removed = false;
+  const progress = createProgressReporter({ send: async () => ({ sentMessages: [{ message: { id: 'message' } }] }), edit: async (_, content) => { edits.push(content); }, remove: async () => { removed = true; } });
+  await progress.receive({ stage: 'started', toolName: 'project_search' });
+  await progress.finish({ cancelled: true });
+  assert.deepEqual(edits, ['stopped this answer.']);
+  assert.equal(removed, false);
+  await progress.receive({ stage: 'completed', toolName: 'project_search', resultCount: 5 });
+  assert.deepEqual(edits, ['stopped this answer.']);
+});

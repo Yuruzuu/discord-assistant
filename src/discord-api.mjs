@@ -190,9 +190,9 @@ export class DiscordApiClient {
             headers: {
               Authorization: `Bot ${this.token}`,
               'User-Agent': USER_AGENT,
-              ...(payload === undefined ? {} : { 'Content-Type': 'application/json' }),
+              ...(payload === undefined || payload instanceof FormData ? {} : { 'Content-Type': 'application/json' }),
             },
-            ...(payload === undefined ? {} : { body: JSON.stringify(payload) }),
+            ...(payload === undefined ? {} : { body: payload instanceof FormData ? payload : JSON.stringify(payload) }),
             signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(this.requestTimeoutMs)]) : AbortSignal.timeout(this.requestTimeoutMs),
           });
           const body = parseJson(await response.text());
@@ -203,7 +203,7 @@ export class DiscordApiClient {
       } catch (error) {
         const code = connectionErrorCode(error);
         if (!code) throw error;
-        if (['GET', 'PUT'].includes(method) && attempt < this.maxRetries && RETRYABLE_CONNECTION_CODES.has(code)) {
+        if (['GET', 'PUT', 'PATCH', 'DELETE'].includes(method) && attempt < this.maxRetries && RETRYABLE_CONNECTION_CODES.has(code)) {
           await this.sleep(250 * 2 ** attempt);
           continue;
         }
@@ -221,7 +221,7 @@ export class DiscordApiClient {
 
       if (response.ok) return body;
       if (response.status === 429 && attempt < this.maxRetries && retryable) continue;
-      if (['GET', 'PUT'].includes(method) && response.status >= 500 && attempt < this.maxRetries) {
+      if (['GET', 'PUT', 'PATCH', 'DELETE'].includes(method) && response.status >= 500 && attempt < this.maxRetries) {
         await this.sleep(250 * 2 ** attempt);
         continue;
       }
@@ -330,6 +330,45 @@ export class DiscordApiClient {
 
   sendMessage(channelId, payload, options) {
     return this.post(`/channels/${channelId}/messages`, payload, options);
+  }
+
+  editMessage(channelId, messageId, payload, options) {
+    return this.scheduleRequest('PATCH', `/channels/${channelId}/messages/${messageId}`, payload, options);
+  }
+
+  deleteMessage(channelId, messageId, options) {
+    return this.scheduleRequest('DELETE', `/channels/${channelId}/messages/${messageId}`, undefined, options);
+  }
+
+  removeOwnReaction(channelId, messageId, emoji, options) {
+    return this.scheduleRequest('DELETE', `/channels/${channelId}/messages/${messageId}/reactions/${encodeURIComponent(emoji)}/@me`, undefined, options);
+  }
+
+  sendMessageFiles(channelId, payload, files, options) {
+    if (!Array.isArray(files) || files.length < 1 || files.length > 3) throw new Error('Provide one to three generated text files');
+    const form = new FormData();
+    form.append('payload_json', JSON.stringify(payload));
+    let total = 0;
+    for (const [index, file] of files.entries()) {
+      if (typeof file.name !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/.test(file.name) || typeof file.content !== 'string') throw new Error('Generated files require a safe filename and text content');
+      const size = Buffer.byteLength(file.content);
+      total += size;
+      if (size > 128 * 1024 || total > 256 * 1024) throw new Error('Generated file byte limit exceeded');
+      form.append(`files[${index}]`, new Blob([file.content], { type: 'text/plain;charset=utf-8' }), file.name);
+    }
+    return this.post(`/channels/${channelId}/messages`, form, options);
+  }
+
+  createThread(channelId, payload, options) {
+    return this.post(`/channels/${channelId}/threads`, payload, options);
+  }
+
+  registerCommands(applicationId, commands) {
+    return this.scheduleRequest('PUT', `/applications/${applicationId}/commands`, commands);
+  }
+
+  registerCommand(applicationId, command) {
+    return this.post(`/applications/${applicationId}/commands`, command);
   }
 
   triggerTyping(channelId, options) {

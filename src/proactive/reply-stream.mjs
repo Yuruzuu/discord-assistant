@@ -11,7 +11,7 @@ export function createReplyStream(onMessage) {
   function push(delta) {
     const start = buffer.length;
     buffer += delta;
-    if (buffer.length > 65536) throw new Error('Codex reply exceeded the stream size limit');
+    if (buffer.length > 2 * 1024 * 1024) throw new Error('Codex reply exceeded the stream size limit');
     for (let index = start; index < buffer.length; index += 1) {
       const character = buffer[index];
       if (quoted) {
@@ -23,7 +23,7 @@ export function createReplyStream(onMessage) {
       if (character === '"') { quoted = true; continue; }
       if (character === '[' && stack.length === 1) {
         const prefix = JSON.parse(buffer.slice(0, index) + '[]}');
-        if (Object.keys(prefix).some((key) => !['shouldReply', 'messages', 'reactions'].includes(key))) throw new Error('Codex emitted an unexpected reply field');
+        if (Object.keys(prefix).some((key) => !['shouldReply', 'messages', 'reactions', 'files'].includes(key))) throw new Error('Codex emitted an unexpected reply field');
         messagesArray = Object.keys(prefix).at(-1) === 'messages';
         allowed = messagesArray && prefix.shouldReply === true;
       }

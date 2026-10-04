@@ -1,10 +1,50 @@
 import { createHash } from 'node:crypto';
 import { sendResolvedMessage } from '../messaging.mjs';
 import { normalizeReactionEmoji } from '../reactions.mjs';
+import { splitDiscordText, validateGeneratedFiles } from './discord-chunks.mjs';
+import { shapeMessage } from '../shapes.mjs';
 
-export function createReplySender(service, { guildId, channelId, listenerId, directMessages = false }) {
+export function createReplySender(service, { guildId, channelId, listenerId, directMessages = false, deliveryJournal, progressComponents, messageComponents }) {
   let currentTrigger;
   let resolution;
+  const temporaryReactions = new Map();
+  const naturalReactions = new Set();
+  let reactionQueue = Promise.resolve();
+  const componentCards = new Set();
+
+  async function attachComponents(target, trigger, confirmed, signal, factory) {
+    if (!factory || signal?.aborted) return;
+    try {
+      const components = await factory(trigger, confirmed.message);
+      signal?.throwIfAborted();
+      if (components?.length) await target.account.client.editMessage(channelId, confirmed.message.id, { components }, { signal });
+    } catch { /* Controls are optional decoration on an already confirmed message. */ }
+  }
+
+  async function attachMessageComponents(target, trigger, confirmed, signal) {
+    if (!messageComponents || signal?.aborted || componentCards.has(trigger.id)) return;
+    componentCards.add(trigger.id);
+    if (componentCards.size > 1000) componentCards.delete(componentCards.values().next().value);
+    await attachComponents(target, trigger, confirmed, signal, messageComponents);
+  }
+
+  async function deliver(operationId, operation, metadata) {
+    const previous = await deliveryJournal?.lookup(operationId);
+    if (previous?.status === 'unknown') throw new Error('A previous delivery outcome is unknown; inspect its receipt before retrying');
+    if (previous?.receipt) return previous.receipt;
+    let receipt;
+    try {
+      await deliveryJournal?.begin?.(operationId, metadata);
+      receipt = await operation();
+      await deliveryJournal?.record(operationId, receipt);
+      return receipt;
+    } catch (error) {
+      if (receipt) error.sendStatus = 'unknown';
+      if (error.sendStatus === 'unknown') await deliveryJournal?.unknown(operationId, { ...metadata, ...(receipt ? { receipt } : {}) });
+      else if (error.sendStatus === 'rejected') await deliveryJournal?.resolve?.(operationId, { delivered: false });
+      throw error;
+    }
+  }
 
   function resolve(trigger) {
     if (currentTrigger !== trigger.id) {
@@ -18,21 +58,30 @@ export function createReplySender(service, { guildId, channelId, listenerId, dir
     if (!Number.isSafeInteger(offset) || offset < 0 || offset + messages.length > 5) throw new Error('Invalid reply bubble offset');
     const batchId = createHash('sha256').update(`${listenerId}:${trigger.id}`).digest('hex').slice(0, 20);
     const sentMessages = [];
+    let failedMessageIndex = offset;
     try {
       signal?.throwIfAborted();
       const target = await resolve(trigger);
       for (const [index, message] of messages.entries()) {
         const position = offset + index;
-        const sent = await sendResolvedMessage(target, {
-          ...message, guildId, channelId, replyToMessageId: !directMessages && position === 0 ? replyToMessageId : undefined,
-          allowMentions: false, mentionRepliedUser: false, nonce: `${batchId}:${position}`,
-        }, signal);
-        sentMessages.push(sent);
+        failedMessageIndex = position;
+        const content = [message.content, message.gifUrl].filter(Boolean).join('\n');
+        const chunks = splitDiscordText(content);
+        for (const [chunkIndex, chunk] of chunks.entries()) {
+          const nonce = chunkIndex === 0 ? `${batchId}:${position}` : `${batchId}:${position}c${chunkIndex}`;
+          const sent = await deliver(`${batchId}:${position}:text:${chunkIndex}`, () => sendResolvedMessage(target, {
+            content: chunk, stickerIds: chunkIndex === 0 ? message.stickerIds : [], guildId, channelId,
+            replyToMessageId: !directMessages && position === 0 && chunkIndex === 0 ? replyToMessageId : undefined,
+            allowMentions: false, mentionRepliedUser: false, nonce,
+          }, signal), { channelId, triggerMessageId: trigger.id, nonce });
+          sentMessages.push(sent);
+          if (position === 0 && chunkIndex === 0) await attachMessageComponents(target, trigger, sent, signal);
+        }
       }
     } catch (error) {
       error.batchId = batchId;
       error.sentMessages = sentMessages;
-      error.failedMessageIndex = offset + sentMessages.length;
+      error.failedMessageIndex = failedMessageIndex;
       throw error;
     }
 
@@ -47,14 +96,77 @@ export function createReplySender(service, { guildId, channelId, listenerId, dir
     const message = await sendResolvedMessage(target, {
       content, guildId, channelId, allowMentions: false, nonce: `${batchId}:p${index}`,
     }, signal);
+    await attachComponents(target, trigger, message, signal, progressComponents);
     return { batchId, sentMessages: [message] };
+  };
+
+  send.progress.edit = async (receipt, content, signal) => {
+    signal?.throwIfAborted();
+    const target = await resolution;
+    const messageId = receipt.sentMessages[0].message.id;
+    await target.account.client.editMessage(channelId, messageId, { content, allowed_mentions: { parse: [] } }, { signal });
+  };
+  send.progress.remove = async (receipt, signal) => {
+    signal?.throwIfAborted();
+    const target = await resolution;
+    await target.account.client.deleteMessage(channelId, receipt.sentMessages[0].message.id, { signal });
+  };
+
+  send.files = async (files, trigger, signal, { replyToMessageId } = {}) => {
+    const validated = validateGeneratedFiles(files);
+    if (!validated.length) return { sentMessages: [] };
+    signal?.throwIfAborted();
+    const target = await resolve(trigger);
+    const batchId = createHash('sha256').update(`${listenerId}:${trigger.id}`).digest('hex').slice(0, 20);
+    const nonce = `${batchId}:f`;
+    const receipt = await deliver(`${batchId}:files`, async () => {
+      let message;
+      try {
+        message = await target.account.client.sendMessageFiles(channelId, {
+          allowed_mentions: { parse: [], replied_user: false }, nonce, enforce_nonce: true,
+          ...(!directMessages && replyToMessageId ? { message_reference: { message_id: replyToMessageId, channel_id: channelId, fail_if_not_exists: true } } : {}),
+        }, validated, { signal });
+      } catch (error) { error.sendStatus = error.status && error.status < 500 ? 'rejected' : 'unknown'; throw error; }
+      return { accountId: target.account.id, nonce, message: shapeMessage({ ...message, channel_id: channelId, guild_id: guildId }) };
+    }, { channelId, triggerMessageId: trigger.id, nonce });
+    await attachMessageComponents(target, trigger, receipt, signal);
+    return { batchId, sentMessages: [receipt] };
+  };
+
+  async function updateStatusReaction(stage, trigger, signal) {
+    const emoji = { queued: '⏳', working: '⚙️', tool: '🔎', done: '✅', error: '⚠️', stalled: '⌛' }[stage];
+    signal?.throwIfAborted();
+    const target = await resolve(trigger);
+    if (!target.account.client.removeOwnReaction) return;
+    const previous = temporaryReactions.get(trigger.id);
+    if (previous === emoji) return;
+    if (previous) await target.account.client.removeOwnReaction(channelId, trigger.id, previous, { signal });
+    temporaryReactions.delete(trigger.id);
+    if (emoji) {
+      if (naturalReactions.has(`${trigger.id}:${emoji}`) || trigger.reactions?.some((reaction) => reaction.me && reaction.emoji?.name === emoji)) return;
+      await target.account.client.addReaction(channelId, trigger.id, emoji, { signal });
+      temporaryReactions.set(trigger.id, emoji);
+    }
+  }
+  send.statusReaction = (stage, trigger, signal) => {
+    const operation = reactionQueue.catch(() => {}).then(() => updateStatusReaction(stage, trigger, signal));
+    reactionQueue = operation;
+    return operation;
+  };
+  send.clearStatusReactions = async () => {
+    await reactionQueue.catch(() => {});
+    for (const messageId of [...temporaryReactions.keys()]) await send.statusReaction(undefined, { id: messageId });
   };
 
   send.react = async (reaction, trigger, signal) => {
     signal?.throwIfAborted();
+    await reactionQueue.catch(() => {});
     const target = await resolve(trigger);
     signal?.throwIfAborted();
     await target.account.client.addReaction(channelId, reaction.messageId, normalizeReactionEmoji(reaction.emoji), { signal });
+    naturalReactions.add(`${reaction.messageId}:${normalizeReactionEmoji(reaction.emoji)}`);
+    if (naturalReactions.size > 1000) naturalReactions.delete(naturalReactions.values().next().value);
+    if (temporaryReactions.get(reaction.messageId) === normalizeReactionEmoji(reaction.emoji)) temporaryReactions.delete(reaction.messageId);
     return { messageId: reaction.messageId, reacted: true };
   };
 

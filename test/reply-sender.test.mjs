@@ -59,3 +59,51 @@ test('cancelled progress sends do not perform channel resolution or posting', as
   const send = createReplySender({ resolveChannel: () => { throw new Error('Should not resolve'); } }, { channelId: '200000000000000001', listenerId: 'fixture' });
   await assert.rejects(send.progress('checking chats', { id: '300000000000000001' }, cancellation.signal), { name: 'AbortError' });
 });
+
+test('owner control decoration attaches once to the first confirmed source chunk or file-only message', async () => {
+  for (const fileOnly of [false, true]) {
+    const posts = [];
+    const edits = [];
+    const cards = [];
+    const channelId = '200000000000000001';
+    const client = {
+      sendMessage: async (_, payload) => { posts.push(payload); return { id: `40000000000000000${posts.length}`, content: payload.content }; },
+      sendMessageFiles: async (_, payload) => { posts.push(payload); return { id: `40000000000000000${posts.length}`, attachments: [] }; },
+      editMessage: async (_, id, payload) => { edits.push({ id, payload }); },
+    };
+    const components = [{ type: 1, components: [{ type: 2, style: 2, label: 'Details', custom_id: 'nova:details:opaque' }] }];
+    const sender = createReplySender({ resolveChannel: async () => ({ channel: { id: channelId }, account: { id: 'default', client } }) }, { channelId, listenerId: 'fixture', messageComponents: (trigger, message) => { cards.push({ trigger, message }); return components; } });
+    const trigger = { id: '300000000000000001' };
+    if (!fileOnly) {
+      await sender([{ content: 'long text '.repeat(600) }], trigger);
+      await sender([{ content: 'another bubble' }], trigger, undefined, { offset: 1 });
+    }
+    await sender.files([{ name: 'notes.md', content: 'Research notes' }], trigger);
+    assert.equal(cards.length, 1);
+    assert.equal(edits.length, 1);
+    assert.equal(edits[0].id, '400000000000000001');
+    assert.deepEqual(edits[0].payload, { components });
+  }
+});
+
+test('component failures preserve confirmed receipts and cancellation skips optional edits', async () => {
+  let posts = 0;
+  let edits = 0;
+  const cancellation = new AbortController();
+  const channelId = '200000000000000001';
+  const client = {
+    sendMessage: async (_, payload) => { posts += 1; return { id: `40000000000000000${posts}`, content: payload.content }; },
+    editMessage: async () => { edits += 1; throw new Error('Optional control edit failed'); },
+  };
+  const sender = createReplySender({ resolveChannel: async () => ({ channel: { id: channelId }, account: { id: 'default', client } }) }, { channelId, listenerId: 'fixture', messageComponents: () => [{ type: 1 }], progressComponents: () => [{ type: 1 }] });
+  const result = await sender([{ content: 'confirmed answer' }], { id: '300000000000000001' });
+  assert.equal(result.sentMessages.length, 1);
+  const progress = await sender.progress('checking', { id: '300000000000000002' });
+  assert.equal(progress.sentMessages.length, 1);
+  assert.equal(posts, 2);
+  assert.equal(edits, 2);
+  client.sendMessage = async (_, payload) => { posts += 1; cancellation.abort(); return { id: '400000000000000003', content: payload.content }; };
+  const stopped = await sender([{ content: 'already confirmed when stopped' }], { id: '300000000000000003' }, cancellation.signal);
+  assert.equal(stopped.sentMessages.length, 1);
+  assert.equal(edits, 2);
+});
