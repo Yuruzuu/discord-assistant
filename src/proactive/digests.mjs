@@ -1,10 +1,11 @@
-import { mkdir, readFile, rename, writeFile, chmod } from 'node:fs/promises';
+import { mkdir, readFile, chmod } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { searchMessages } from '../search.mjs';
 import { assertSnowflake, compareSnowflakes } from '../discord-url.mjs';
 import { directMessageOwnerId } from './target.mjs';
+import { writeFileAtomic } from './state.mjs';
 
 function owner(userId) {
   if (userId !== directMessageOwnerId) throw new Error('Only the owner can manage digests');
@@ -56,9 +57,7 @@ export function createDigestManager({ service, accountId, root = join(homedir(),
     const operation = writes.catch(() => {}).then(async () => {
       await mkdir(root, { recursive: true, mode: 0o700 });
       await chmod(root, 0o700);
-      const temporary = `${filename}.${randomUUID()}.tmp`;
-      await writeFile(temporary, payload, { mode: 0o600 });
-      await rename(temporary, filename);
+      await writeFileAtomic(filename, payload);
       await chmod(filename, 0o600);
     });
     writes = operation;

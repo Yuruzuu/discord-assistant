@@ -1,9 +1,10 @@
-import { mkdir, readFile, rename, writeFile, chmod, open, unlink } from 'node:fs/promises';
+import { mkdir, readFile, chmod, open, unlink } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join, resolve as resolvePath } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { assertSnowflake } from '../discord-url.mjs';
 import { directMessageOwnerId } from './target.mjs';
+import { writeState } from './state.mjs';
 
 const openJournals = new Map();
 const retentionMs = 7 * 24 * 60 * 60 * 1000;
@@ -115,13 +116,8 @@ async function openJournal({ accountId, channelId, root, now }) {
   const pruneIngress = () => prune(ingress, (entry) => entry.status !== 'completed');
 
   async function save() {
-    const temporary = `${filename}.${randomUUID()}.tmp`;
-    const data = { version: 1, accountId, channelId, operations: [...operations.values()], ingress: [...ingress.values()] };
-    try {
-      await writeFile(temporary, JSON.stringify(data), { mode: 0o600 });
-      await rename(temporary, filename);
-      await chmod(filename, 0o600);
-    } catch (error) { await unlink(temporary).catch(() => {}); throw error; }
+    await writeState(filename, { version: 1, accountId, channelId, operations: [...operations.values()], ingress: [...ingress.values()] });
+    await chmod(filename, 0o600);
   }
 
   function serial(operation) {

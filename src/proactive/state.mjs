@@ -1,4 +1,4 @@
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -45,10 +45,17 @@ export async function readState(filename) {
   catch (error) { if (error.code === 'ENOENT') return null; throw error; }
 }
 
-export async function writeState(filename, value) {
+// Writes a private file by renaming a fully written temporary file into place.
+export async function writeFileAtomic(filename, text) {
   const temporary = `${filename}.${randomUUID()}.tmp`;
-  await writeFile(temporary, JSON.stringify(value), { mode: 0o600 });
-  await rename(temporary, filename);
+  try {
+    await writeFile(temporary, text, { mode: 0o600 });
+    await rename(temporary, filename);
+  } catch (error) { await unlink(temporary).catch(() => {}); throw error; }
+}
+
+export async function writeState(filename, value) {
+  await writeFileAtomic(filename, JSON.stringify(value));
 }
 
 export async function ensureStateRoot(root) {
