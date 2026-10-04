@@ -23,7 +23,7 @@ function uniqueChannels(channels) {
 }
 
 export class DiscordService {
-  constructor({ accounts, imageLimits, fetchImpl = globalThis.fetch, sleep, maxRetries, requestConcurrency = 4, proactiveEntrypoint } = {}) {
+  constructor({ accounts, imageLimits, fetchImpl = globalThis.fetch, sleep, maxRetries, requestConcurrency = 10, proactiveEntrypoint } = {}) {
     if (!Array.isArray(accounts) || accounts.length === 0) throw new Error('At least one Discord account is required');
     this.accounts = accounts.map((account) => ({
       ...account,

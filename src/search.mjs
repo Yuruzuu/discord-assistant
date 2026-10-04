@@ -1,4 +1,4 @@
-import { assertSnowflake, compareSnowflakes } from './discord-url.mjs';
+import { assertSnowflake, compareSnowflakes, snowflakeTimestamp } from './discord-url.mjs';
 import { mapConcurrent } from './concurrency.mjs';
 import { shapeMessage, shapeChannel } from './shapes.mjs';
 
@@ -37,11 +37,13 @@ export async function searchMessages(service, {
   let totalResults = null;
   let doingHistoricalIndex = false;
   let pagesFetched = 0;
-  while (messages.size < limit && nextOffset <= maximumOffset && pagesFetched < 20) {
+  const fetchPage = async (pageOffset, requested) => {
     signal?.throwIfAborted();
-    const requested = Math.min(pageSize, limit - messages.size, maximumOffset + pageSize - nextOffset);
-    const result = await account.client.searchGuildMessages(guildId, { ...filters, limit: requested, offset: nextOffset }, { signal });
+    const result = await account.client.searchGuildMessages(guildId, { ...filters, limit: requested, offset: pageOffset }, { signal });
     signal?.throwIfAborted();
+    return result;
+  };
+  const absorb = (result, requested) => {
     pagesFetched += 1;
     totalResults = Number.isFinite(result.total_results) ? result.total_results : totalResults;
     doingHistoricalIndex ||= Boolean(result.doing_deep_historical_index);
@@ -53,7 +55,23 @@ export async function searchMessages(service, {
     }
     for (const thread of result.threads || []) threads.set(thread.id, shapeChannel({ ...thread, guild_id: thread.guild_id || guildId }));
     nextOffset += requested;
-    if (totalResults !== null && nextOffset >= totalResults) break;
+  };
+  const firstRequested = Math.min(pageSize, limit, maximumOffset + pageSize - nextOffset);
+  absorb(await fetchPage(nextOffset, firstRequested), firstRequested);
+  // The first page reports the total, so the remaining pages are known up front and fetched a few at a time instead of one by one.
+  while (messages.size < limit && nextOffset <= maximumOffset && pagesFetched < 20 && (totalResults === null || nextOffset < totalResults)) {
+    const pages = [];
+    let plannedOffset = nextOffset;
+    let planned = messages.size;
+    while (pages.length < 3 && planned < limit && plannedOffset <= maximumOffset && pagesFetched + pages.length < 20 && (totalResults === null || plannedOffset < totalResults)) {
+      const requested = Math.min(pageSize, limit - planned, maximumOffset + pageSize - plannedOffset);
+      pages.push({ offset: plannedOffset, requested });
+      plannedOffset += requested;
+      planned += requested;
+      if (totalResults === null) break;
+    }
+    const results = await mapConcurrent(pages, 3, (page) => fetchPage(page.offset, page.requested));
+    for (const [index, result] of results.entries()) absorb(result, pages[index].requested);
   }
   const hasMore = totalResults === null || nextOffset < totalResults;
   const offsetLimitReached = hasMore && nextOffset > maximumOffset;
@@ -96,7 +114,7 @@ export async function searchMessagesBatch(service, {
       const existing = merged.get(message.id);
       if (existing) { existing.matchedSearches.push(index); continue; }
       merged.set(message.id, {
-        id: message.id, channelId: message.channelId, url: message.url, author: message.author, authorId: message.authorId, timestamp: message.timestamp,
+        id: message.id, channelId: message.channelId, url: message.url, author: message.author, authorId: message.authorId, timestamp: message.timestamp, unix: Math.floor(snowflakeTimestamp(message.id) / 1000),
         content: message.content.length > 600 ? `${message.content.slice(0, 600)}…` : message.content,
         ...(message.attachments.length ? { attachments: message.attachments.length } : {}), ...(message.replyTo ? { replyTo: message.replyTo } : {}), matchedSearches: [index],
       });
