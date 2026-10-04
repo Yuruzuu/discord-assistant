@@ -3,6 +3,7 @@ import { loadConfig } from './src/config.mjs';
 import { runStdioServer } from './src/server.mjs';
 import { DiscordService } from './src/service.mjs';
 import { fileURLToPath } from 'node:url';
+import { createNovaSettings } from './src/proactive/nova-settings.mjs';
 
 async function main() {
   const config = loadConfig();
@@ -10,7 +11,7 @@ async function main() {
     ...config,
     proactiveEntrypoint: process.env.DISCORD_PROACTIVE_ENTRYPOINT || fileURLToPath(new URL('./src/proactive/daemon.mjs', import.meta.url)),
   });
-  await runStdioServer(service);
+  await runStdioServer(service, { novaOptions: await createNovaSettings().load() });
   process.stderr.write(`[discord-readonly] v2 started with ${config.accounts.length} account(s)\n`);
 }
 
