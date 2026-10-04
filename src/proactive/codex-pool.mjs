@@ -46,7 +46,6 @@ export async function acquireCodexServer({ command, env, spawnImpl, onNotificati
   return {
     async request(method, parameters, timeoutMs) {
       if (released) throw new Error('The Codex conversation is stopped');
-      if (method === 'initialize') return {};
       const result = await entry.server.request(method, parameters, timeoutMs);
       if (method === 'thread/start') {
         owner.threadId = result.thread.id;
@@ -54,7 +53,6 @@ export async function acquireCodexServer({ command, env, spawnImpl, onNotificati
       }
       return result;
     },
-    notify(method, parameters) { if (method !== 'initialized') entry.server.notify(method, parameters); },
     isClosed: () => released || entry.server.isClosed(),
     peers: () => entry.owners.size,
     async close() {

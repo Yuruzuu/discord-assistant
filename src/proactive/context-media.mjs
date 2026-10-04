@@ -1,3 +1,5 @@
+import { isVoiceAttachment } from './voice-transcriber.mjs';
+
 export async function reportPreparation(onProgress, event, signal) {
   signal?.throwIfAborted();
   try { await onProgress?.(event, signal); } catch { signal?.throwIfAborted(); }
@@ -50,4 +52,3 @@ export async function transcribeVoiceNotes(messages, transcribe, signal, { onPro
   }
   return { transcripts, warnings };
 }
-import { isVoiceAttachment } from './voice-transcriber.mjs';

@@ -5,12 +5,11 @@ import { createMemoryStore, memoryPath, parseMemoryCommand } from './memory.mjs'
 import { createMemoryCommandHandler } from './memory-commands.mjs';
 import { createReplySender } from './reply-sender.mjs';
 import { startTypingIndicator } from './typing.mjs';
-import { assertOwnerDirectMessageChannel } from './target.mjs';
+import { acceptsListenerMessage, assertOwnerDirectMessageChannel, directMessageOwnerId } from './target.mjs';
 import { createDiscordReadTools } from './read-tools.mjs';
 import { createVoiceTranscriber } from './voice-transcriber.mjs';
 import { createNovaSettings } from './nova-settings.mjs';
 import { createDeliveryJournal } from './delivery-journal.mjs';
-import { acceptsListenerMessage, directMessageOwnerId } from './target.mjs';
 import { parseNovaCommand } from './controls.mjs';
 import { join } from 'node:path';
 
