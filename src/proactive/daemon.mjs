@@ -51,7 +51,7 @@ async function main() {
   }
 
   function status() {
-    return { ...state, ...runtime?.status(), ...(configuration.allServers ? { watchedGuildCount: gateway?.guildCount() || 0 } : {}) };
+    return { ...state, ...runtime?.status(), gateway: gateway?.status(), ...(configuration.allServers ? { watchedGuildCount: gateway?.guildCount() || 0 } : {}) };
   }
 
   function errorMessage(error) {
@@ -61,7 +61,7 @@ async function main() {
   async function shutdown() {
     if (shuttingDown) return;
     shuttingDown = true;
-    gateway?.close();
+    await gateway?.close();
     if (runtime) await runtime.close();
     else if (runtimeStartup) await runtimeStartup.then((created) => created.close()).catch(() => {});
     await updateState({ running: false, state: 'stopped', stoppedAt: new Date().toISOString() });
@@ -111,11 +111,12 @@ async function main() {
       token: account.token, guildId: configuration.guildId, channelId: configuration.channelId,
       directMessages: configuration.directMessages, allServers: configuration.allServers,
       onMessage: runtime.receive, onError: (error) => { void updateState({ lastError: errorMessage(error) }); },
+      onConnection: (connection) => { void updateState({ gateway: connection, ...(connection.connected ? { lastError: null } : {}) }); },
     });
     await gateway.connect();
-    if (!shuttingDown) await updateState({ ...status(), running: true, state: 'running', botName: bot.username });
+    if (!shuttingDown) await updateState({ ...status(), running: true, state: 'running', botName: bot.username, lastError: null });
   } catch (error) {
-    gateway?.close();
+    await gateway?.close();
     await runtime?.close();
     if (shuttingDown) return;
     await updateState({ running: false, state: 'failed', lastError: errorMessage(error) });
