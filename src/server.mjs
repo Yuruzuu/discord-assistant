@@ -88,8 +88,6 @@ export function createDiscordMcpServer(service, { novaOptions = {} } = {}) {
     description: 'Open a specific message link or message ID and read its surrounding conversation in chronological order. Returns the anchor, up to 250 messages, and arguments for browsing older or newer context. Images are opt-in.',
     inputSchema: readToolFields('discord_message_context', { trustedLocal: true }),
   }, async (args) => {
-    const source = service.normalizeReadSource(args);
-    if (!source.messageId) throw new Error('Provide a message URL or channelId and messageId');
     const { toolImages, ...result } = await executeSharedReadTool(service, 'discord_message_context', args);
     return success(result, toolImages);
   });
@@ -99,8 +97,8 @@ export function createDiscordMcpServer(service, { novaOptions = {} } = {}) {
     description: 'Continue through channel history with before/after cursors, or open an around/message anchor. Reads up to 250 messages per call and returns chronological messages plus older/newer navigation arguments.',
     inputSchema: readToolFields('discord_browse_messages', { trustedLocal: true }),
   }, async (args) => {
-    const result = await browseMessages(service, args);
-    return success(result.structured, result.images);
+    const { toolImages, ...result } = await executeSharedReadTool(service, 'discord_browse_messages', args);
+    return success(result, toolImages);
   });
 
   register(server, 'discord_fetch_attachment', {
