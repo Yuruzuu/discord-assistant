@@ -12,7 +12,7 @@ images, voice notes, reactions, progress displays and owner controls.
 Reading uses Discord REST. Sending, reactions, progress edits and research-thread
 creation occur only when requested or within explicitly enabled conversations.
 The listener starts on demand; it does not auto-start with the operating system.
-Version 2.9.0 exposes 34 MCP tools, or 37 with approved project roots. Existing
+Version 2.9.0 exposes 35 MCP tools, or 38 with approved project roots. Existing
 MCP tool names and arguments remain compatible.
 
 ## Requirements

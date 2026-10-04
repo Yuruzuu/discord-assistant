@@ -78,6 +78,20 @@ export function createDiscordReadTools(service, scope, options = {}) {
     return result;
   });
 
+  register('discord_search_batch', 'Run up to 10 message searches in one call (different keywords, channels or authors), concurrently, with hits merged and deduplicated. Prefer this over many discord_search_messages calls; start with the default small limitPerSearch and only page deeper with discord_search_messages continuation for the most promising search.', {}, async (args, signal) => {
+    if (scope.trustedLocal) return executeSharedReadTool(service, 'discord_search_batch', args, signal);
+    const { account } = await guild(args.guildId);
+    for (const channelId of new Set([...args.channelIds, ...args.searches.flatMap((search) => search.channelIds)])) {
+      signal?.throwIfAborted();
+      const channel = await account.client.getChannel(channelId);
+      if (channel.guild_id !== args.guildId) throw new Error('Search channel does not belong to the requested server');
+    }
+    const result = await executeSharedReadTool(service, 'discord_search_batch', { ...args, accountId: account.id }, signal);
+    const allowed = tools.get('discord_search_messages').schema.shape;
+    for (const search of result.searches) if (search.continuation) search.continuation = Object.fromEntries(Object.entries(search.continuation).filter(([name]) => Object.hasOwn(allowed, name)));
+    return result;
+  });
+
   async function browse(args, requireAnchor, signal) {
     const source = await channelSource(args);
     if (requireAnchor && !source.messageId) throw new Error('Provide a message URL or channelId and messageId');

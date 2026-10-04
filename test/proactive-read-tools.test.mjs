@@ -54,7 +54,7 @@ function contents(result) { return JSON.parse(result.contentItems[0].text); }
 test('owner DM tools resolve names, search other servers, preserve continuation and open message URL context', async () => {
   const { service, calls } = fixture();
   const tools = createDiscordReadTools(service, scope);
-  assert.equal(tools.definitions.length, 10);
+  assert.equal(tools.definitions.length, 11);
   assert.ok(tools.definitions.every((tool) => tool.type === 'function' && tool.inputSchema.additionalProperties === false));
   assert.equal(contents(await tools.call('discord_list_servers', {})).servers.length, 2);
   const members = contents(await tools.call('discord_find_members', { guildId, query: 'Valk' }));
@@ -105,14 +105,14 @@ test('dynamic read calls work inside a warm ephemeral conversation and report on
   try {
     await respond(context, undefined, { onProgress: async (event) => { progress.push(event); } });
     const start = server.requests.find((request) => request.method === 'thread/start').params;
-    assert.equal(start.dynamicTools.length, 10);
+    assert.equal(start.dynamicTools.length, 11);
     assert.equal(start.config.features.shell_tool, false);
     assert.equal(start.config.permissions[start.permissions].network.enabled, false);
     assert.ok(server.toolResponses.slice(0, 3).every((response) => response.result.success));
     assert.ok(server.toolResponses.slice(3).every((response) => !response.result.success));
     assert.deepEqual(progress.filter((event) => event.stage === 'started').map((event) => event.toolName), ['discord_list_servers', 'discord_find_members', 'discord_search_messages']);
     assert.equal(progress.at(-1).resultCount, 1);
-    assert.ok(!JSON.stringify(progress).includes('SJW'));
+    assert.deepEqual(progress.find((event) => event.toolName === 'discord_search_messages').arguments, { guildId, query: 'SJW', limit: 1 }, 'progress gets tool arguments so it can describe the search');
     assert.ok(!JSON.stringify(progress).includes('internal reasoning'));
     assert.ok(!JSON.stringify(start).includes(service.accounts[0].token));
   } finally { await respond.close(); }

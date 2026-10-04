@@ -1,4 +1,5 @@
-import { assertSnowflake } from './discord-url.mjs';
+import { assertSnowflake, compareSnowflakes } from './discord-url.mjs';
+import { mapConcurrent } from './concurrency.mjs';
 import { shapeMessage, shapeChannel } from './shapes.mjs';
 
 const pageSize = 25;
@@ -69,4 +70,44 @@ export async function searchMessages(service, {
     } : null,
     contextTool: 'discord_message_context',
   };
+}
+
+// Runs several keyword/filter variants in one call: small pages, bounded concurrency, one routed account, and hits merged across searches.
+export async function searchMessagesBatch(service, {
+  guildId, searches, channelIds = [], authorIds = [], beforeId, afterId, sortOrder = 'desc', limitPerSearch = 25, includeNsfw = false, accountId,
+}, { signal } = {}) {
+  signal?.throwIfAborted();
+  assertSnowflake(guildId, 'guildId');
+  if (!Array.isArray(searches) || searches.length < 1 || searches.length > 10) throw new Error('Provide 1 to 10 searches');
+  if (!Number.isSafeInteger(limitPerSearch) || limitPerSearch < 1 || limitPerSearch > 100) throw new Error('limitPerSearch must be between 1 and 100');
+  const account = accountId ? service.accountById(accountId) : await service.accountForGuild(guildId);
+  const outcomes = await mapConcurrent(searches, 3, async (search) => {
+    const filters = {
+      guildId, query: search.query || '', channelIds: search.channelIds?.length ? search.channelIds : channelIds,
+      authorIds: search.authorIds?.length ? search.authorIds : authorIds, has: search.has || [],
+      beforeId, afterId, sortOrder, includeNsfw, limit: limitPerSearch, accountId: account.id,
+    };
+    try { return { filters, result: await searchMessages(service, filters, { signal }) }; }
+    catch (error) { signal?.throwIfAborted(); return { filters, error: String(error.message).slice(0, 300) }; }
+  });
+  const merged = new Map();
+  const summaries = outcomes.map(({ filters, result, error }, index) => {
+    for (const message of result?.messages || []) {
+      const existing = merged.get(message.id);
+      if (existing) { existing.matchedSearches.push(index); continue; }
+      merged.set(message.id, {
+        id: message.id, channelId: message.channelId, url: message.url, author: message.author, authorId: message.authorId, timestamp: message.timestamp,
+        content: message.content.length > 600 ? `${message.content.slice(0, 600)}…` : message.content,
+        ...(message.attachments.length ? { attachments: message.attachments.length } : {}), ...(message.replyTo ? { replyTo: message.replyTo } : {}), matchedSearches: [index],
+      });
+    }
+    return { index, query: filters.query, channelIds: filters.channelIds, authorIds: filters.authorIds, ...(error ? { error } : {
+      totalResults: result.totalResults, returned: result.messages.length, hasMore: result.hasMore, doingHistoricalIndex: result.doingHistoricalIndex,
+      continuation: result.continuation ? { ...result.continuation, limit: 250 } : null,
+    }) };
+  });
+  const messages = [...merged.values()].sort((left, right) => compareSnowflakes(right.id, left.id) * (sortOrder === 'asc' ? -1 : 1));
+
+  return { accountId: account.id, guildId, searches: summaries, uniqueMessages: messages.length, messages,
+    nextStep: 'Open promising hits with discord_message_context. To dig deeper into one search, call discord_search_messages with its continuation.' };
 }
