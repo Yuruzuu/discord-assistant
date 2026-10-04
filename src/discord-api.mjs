@@ -1,4 +1,5 @@
 import { createConcurrencyLimit } from './concurrency.mjs';
+import { setTimeout as wait } from 'node:timers/promises';
 
 const API_BASE = 'https://discord.com/api/v10';
 const USER_AGENT = 'discord-readonly-mcp/2.0 (+https://github.com/Vorakorn1001/discord-readonly-mcp)';
@@ -8,10 +9,6 @@ const RETRYABLE_CONNECTION_CODES = new Set([
   'ETIMEDOUT', 'EHOSTUNREACH', 'ENETUNREACH', 'EPIPE',
   'UND_ERR_CONNECT_TIMEOUT', 'UND_ERR_HEADERS_TIMEOUT', 'UND_ERR_BODY_TIMEOUT', 'UND_ERR_SOCKET',
 ]);
-
-function wait(milliseconds) {
-  return new Promise((resolve) => setTimeout(resolve, milliseconds));
-}
 
 function isAllowedMediaHost(hostname) {
   const host = hostname.toLowerCase();
@@ -255,11 +252,15 @@ export class DiscordApiClient {
     return this.get(`/guilds/${guildId}/members/${userId}`);
   }
 
+  searchGuildMembers(guildId, query, limit = 25) {
+    return this.get(`/guilds/${guildId}/members/search?${new URLSearchParams({ query, limit: String(limit) })}`);
+  }
+
   listGuildRoles(guildId) {
     return this.get(`/guilds/${guildId}/roles`);
   }
 
-  async searchGuildMessages(guildId, parameters) {
+  async searchGuildMessages(guildId, parameters, { signal } = {}) {
     const query = new URLSearchParams();
     for (const [key, value] of Object.entries(parameters)) {
       if (value === undefined || value === null) continue;
@@ -268,14 +269,16 @@ export class DiscordApiClient {
     }
     const path = `/guilds/${guildId}/messages/search?${query}`;
     for (let attempt = 0; attempt <= this.maxRetries; attempt += 1) {
+      signal?.throwIfAborted();
       const result = await this.get(path);
+      signal?.throwIfAborted();
       if (result?.code !== 110000) {
         if (!Array.isArray(result?.messages)) throw new DiscordApiError('Discord returned an invalid message search result', { path, accountId: this.accountId });
         return result;
       }
       if (attempt === this.maxRetries) throw new DiscordApiError('Discord is still indexing this server. Retry the search later.', { status: 202, code: 110000, path, accountId: this.accountId });
       const delay = Number(result.retry_after);
-      await this.sleep(Number.isFinite(delay) && delay >= 0 ? Math.max(delay * 1000, 250) : 1000);
+      await this.sleep(Number.isFinite(delay) && delay >= 0 ? Math.max(delay * 1000, 250) : 1000, undefined, { signal });
     }
   }
 

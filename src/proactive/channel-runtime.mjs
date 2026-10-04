@@ -6,6 +6,7 @@ import { createMemoryCommandHandler } from './memory-commands.mjs';
 import { createReplySender } from './reply-sender.mjs';
 import { startTypingIndicator } from './typing.mjs';
 import { assertOwnerDirectMessageChannel } from './target.mjs';
+import { createDiscordReadTools } from './read-tools.mjs';
 
 export async function createChannelRuntime(service, configuration, bot, { warm = true, scheduleReply, onStatus = () => {}, memoryRoot } = {}) {
   const account = service.accountById(configuration.accountId);
@@ -18,7 +19,8 @@ export async function createChannelRuntime(service, configuration, bot, { warm =
   const scope = { channelId: channel.id, guildId: guild?.id || null, directMessages: Boolean(configuration.directMessages) };
   const memory = createMemoryStore(memoryPath({ ...configuration, accountId: account.id }, memoryRoot));
   await memory.load();
-  const generateReply = createCodexResponder({ command: configuration.codexCommand, model: configuration.model, reasoningEffort: configuration.reasoningEffort, serviceTier: configuration.serviceTier, scope });
+  const readTools = createDiscordReadTools(service, scope);
+  const generateReply = createCodexResponder({ command: configuration.codexCommand, model: configuration.model, reasoningEffort: configuration.reasoningEffort, serviceTier: configuration.serviceTier, scope, readTools });
   if (warm) await generateReply.warmup();
   const conversationContext = createConversationContext(client, { bot, guild, channel, directMessages: configuration.directMessages, gifUrls: configuration.gifUrls });
   const engine = createProactiveEngine({

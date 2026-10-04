@@ -1,10 +1,11 @@
 import { EventEmitter } from 'node:events';
 import { PassThrough, Writable } from 'node:stream';
 
-export function fakeCodexServer({ plans, hang = false, tools = {}, delayMs = 5, closeDelayMs = 0 } = {}) {
+export function fakeCodexServer({ plans, hang = false, tools = {}, toolCalls = [], events = [], delayMs = 5, closeDelayMs = 0 } = {}) {
   const requests = [];
   const launches = [];
   const children = [];
+  const toolResponses = [];
   let startedThreads = 0;
   let completedTurns = 0;
   const defaultMessage = { content: 'hey!', gifUrl: null, stickerIds: [] };
@@ -17,12 +18,17 @@ export function fakeCodexServer({ plans, hang = false, tools = {}, delayMs = 5, 
     let stopped = false;
     let turns = 0;
     const timers = new Set();
+    const toolWaiters = new Map();
     function emit(value) { if (!stopped) child.stdout.write(JSON.stringify(value) + '\n'); }
     function later(callback) { const timer = setTimeout(() => { timers.delete(timer); if (!stopped) callback(); }, delayMs); timers.add(timer); }
     child.stdin = new Writable({ write(chunk, encoding, callback) {
       for (const line of chunk.toString().trim().split('\n')) {
         const message = JSON.parse(line);
-        if (!message.method) continue;
+        if (!message.method) {
+          const waiter = toolWaiters.get(message.id);
+          if (waiter) { toolResponses.push(message); toolWaiters.delete(message.id); waiter(); }
+          continue;
+        }
         requests.push(message);
         const reply = (result) => emit({ id: message.id, result });
         if (message.method === 'initialize') reply({});
@@ -39,7 +45,7 @@ export function fakeCodexServer({ plans, hang = false, tools = {}, delayMs = 5, 
           const text = JSON.stringify(plan);
           const first = plan.messages[0] ? text.indexOf(JSON.stringify(plan.messages[0])) + JSON.stringify(plan.messages[0]).length : Math.floor(text.length / 2);
           const itemId = `item-${turnId}`;
-          later(() => {
+          const finish = () => later(() => {
             emit({ method: 'item/started', params: { threadId, turnId, item: { id: itemId, type: 'agentMessage', phase: 'final_answer' } } });
             emit({ method: 'item/agentMessage/delta', params: { threadId, turnId, itemId, delta: text.slice(0, first) } });
             later(() => {
@@ -49,6 +55,14 @@ export function fakeCodexServer({ plans, hang = false, tools = {}, delayMs = 5, 
               emit({ method: 'turn/completed', params: { threadId, turn: { id: turnId, status: 'completed' } } });
             });
           });
+          for (const event of events) emit({ method: event.method, params: { threadId, turnId, ...event.params } });
+          let calls = Promise.resolve();
+          for (const [index, call] of toolCalls.entries()) calls = calls.then(() => new Promise((resolve) => {
+            const id = `tool-request-${turnId}-${index}`;
+            toolWaiters.set(id, resolve);
+            emit({ id, method: call.method || 'item/tool/call', params: { threadId, turnId, callId: `call-${index}`, tool: call.tool, arguments: call.arguments || {}, ...call.params } });
+          }));
+          void calls.then(finish);
         }
       }
       callback();
@@ -64,5 +78,5 @@ export function fakeCodexServer({ plans, hang = false, tools = {}, delayMs = 5, 
     return child;
   };
 
-  return { spawnImpl, requests, launches, children, completedTurns: () => completedTurns };
+  return { spawnImpl, requests, launches, children, toolResponses, completedTurns: () => completedTurns };
 }

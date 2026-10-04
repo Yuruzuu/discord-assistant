@@ -5,12 +5,14 @@ function compareMessages(left, right) {
   return BigInt(left.id) < BigInt(right.id) ? -1 : BigInt(left.id) > BigInt(right.id) ? 1 : 0;
 }
 
-async function readRange(client, channelId, direction, cursor, limit) {
+async function readRange(client, channelId, direction, cursor, limit, signal) {
   const messages = new Map();
   let next = cursor;
   while (messages.size < limit) {
+    signal?.throwIfAborted();
     const requested = Math.min(limit - messages.size, 100);
     const page = await client.listMessages(channelId, { [direction]: next, limit: requested });
+    signal?.throwIfAborted();
     if (!Array.isArray(page)) throw new Error('Discord returned an invalid message history page');
     const ordered = [...page].sort(compareMessages);
     for (const message of ordered) messages.set(message.id, message);
@@ -25,7 +27,8 @@ async function readRange(client, channelId, direction, cursor, limit) {
 
 export async function browseMessages(service, {
   url, guildId, channelId, messageId, before, after, around, limit = 250, includeImages = false,
-}) {
+}, { signal } = {}) {
+  signal?.throwIfAborted();
   if (!Number.isSafeInteger(limit) || limit < 1 || limit > 250) throw new Error('Browse limit must be between 1 and 250');
   if ([before, after, around].filter(Boolean).length > 1) throw new Error('Use only one of before, after, or around');
   for (const [name, value] of Object.entries({ before, after, around })) if (value) assertSnowflake(value, name);
@@ -33,6 +36,7 @@ export async function browseMessages(service, {
   if (source.messageId && (before || after || around)) throw new Error('Use a message anchor or a cursor, not both');
   const anchorId = source.messageId || around;
   const { account, channel } = await service.resolveChannel(source.channelId, source.guildId);
+  signal?.throwIfAborted();
   let messages;
   let anchor;
   if (anchorId) {
@@ -40,32 +44,34 @@ export async function browseMessages(service, {
       account.client.getMessage(source.channelId, anchorId),
       account.client.listMessages(source.channelId, { around: anchorId, limit: Math.min(limit, 100) }),
     ]);
+    signal?.throwIfAborted();
     if (!Array.isArray(window)) throw new Error('Discord returned an invalid message history page');
     anchor = target;
     messages = [...new Map([target, ...window].map((message) => [message.id, message])).values()].sort(compareMessages);
     if (messages.length < limit) {
       const remaining = limit - messages.length;
       const [older, newer] = await Promise.all([
-        readRange(account.client, source.channelId, 'before', messages[0].id, Math.floor(remaining / 2)),
-        readRange(account.client, source.channelId, 'after', messages.at(-1).id, Math.ceil(remaining / 2)),
+        readRange(account.client, source.channelId, 'before', messages[0].id, Math.floor(remaining / 2), signal),
+        readRange(account.client, source.channelId, 'after', messages.at(-1).id, Math.ceil(remaining / 2), signal),
       ]);
       messages = [...older, ...messages, ...newer];
       const missing = limit - messages.length;
       if (missing > 0 && (older.length || newer.length)) {
         const direction = older.length < Math.floor(remaining / 2) ? 'after' : 'before';
         const cursor = direction === 'before' ? messages[0].id : messages.at(-1).id;
-        const extra = await readRange(account.client, source.channelId, direction, cursor, missing);
+        const extra = await readRange(account.client, source.channelId, direction, cursor, missing, signal);
         messages = direction === 'before' ? [...extra, ...messages] : [...messages, ...extra];
       }
     }
   } else if (before || after) {
-    messages = await readRange(account.client, source.channelId, before ? 'before' : 'after', before || after, limit);
+    messages = await readRange(account.client, source.channelId, before ? 'before' : 'after', before || after, limit, signal);
   } else {
     const latest = await account.client.listMessages(source.channelId, { limit: Math.min(limit, 100) });
+    signal?.throwIfAborted();
     if (!Array.isArray(latest)) throw new Error('Discord returned an invalid message history page');
     messages = [...latest].sort(compareMessages);
     if (messages.length === 100 && limit > 100) messages = [
-      ...await readRange(account.client, source.channelId, 'before', messages[0].id, limit - messages.length), ...messages,
+      ...await readRange(account.client, source.channelId, 'before', messages[0].id, limit - messages.length, signal), ...messages,
     ];
   }
   if (messages.length > limit) {

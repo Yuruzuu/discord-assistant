@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
 
-export function createAppServer({ command, cwd, env, spawnImpl = spawn, onNotification = () => {}, onFailure = () => {} }) {
+export function createAppServer({ command, cwd, env, spawnImpl = spawn, onNotification = () => {}, onToolCall, onFailure = () => {} }) {
   const child = spawnImpl(command, [
     'app-server', '--listen', 'stdio://',
     '--disable', 'shell_tool', '--disable', 'plugins', '--disable', 'hooks',
@@ -35,8 +35,17 @@ export function createAppServer({ command, cwd, env, spawnImpl = spawn, onNotifi
     try { message = JSON.parse(line); } catch { return; }
     if (message.method) {
       if (message.id !== undefined) {
-        send({ jsonrpc: '2.0', id: message.id, error: { code: -32601, message: 'Nova cannot execute tools or approval requests' } });
-        onFailure(new Error('Codex requested an unsupported tool or approval'));
+        if (message.method === 'item/tool/call' && onToolCall) {
+          Promise.resolve().then(() => onToolCall(message.params)).then((result) => {
+            if (!closed) send({ jsonrpc: '2.0', id: message.id, result });
+          }).catch((error) => {
+            if (!closed) send({ jsonrpc: '2.0', id: message.id, error: { code: -32603, message: 'Discord reading tool failed' } });
+            onFailure(error);
+          });
+        } else {
+          send({ jsonrpc: '2.0', id: message.id, error: { code: -32601, message: 'Nova cannot execute this tool or approval request' } });
+          onFailure(new Error('Codex requested an unsupported tool or approval'));
+        }
       } else {
         try { onNotification(message.method, message.params); }
         catch (error) { onFailure(error); }

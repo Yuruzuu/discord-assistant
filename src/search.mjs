@@ -8,7 +8,8 @@ export async function searchMessages(service, {
   guildId, query = '', channelIds = [], authorIds = [], mentionsUserIds = [], repliedToMessageIds = [],
   has = [], embedTypes = [], beforeId, afterId, pinned, includeNsfw = false,
   sortBy = 'timestamp', sortOrder = 'desc', limit = 250, offset = 0, accountId,
-}) {
+}, { signal } = {}) {
+  signal?.throwIfAborted();
   assertSnowflake(guildId, 'guildId');
   for (const [label, values] of Object.entries({ channelIds, authorIds, mentionsUserIds, repliedToMessageIds })) {
     for (const value of values) assertSnowflake(value, label);
@@ -27,6 +28,7 @@ export async function searchMessages(service, {
   let doingHistoricalIndex = false;
   let pagesFetched = 0;
   while (messages.size < limit && nextOffset <= maximumOffset && pagesFetched < 20) {
+    signal?.throwIfAborted();
     const requested = Math.min(pageSize, limit - messages.size, maximumOffset + pageSize - nextOffset);
     const result = await account.client.searchGuildMessages(guildId, {
       content: query || undefined,
@@ -35,7 +37,8 @@ export async function searchMessages(service, {
       has: [...new Set(has)].sort(), embed_type: [...new Set(embedTypes)].sort(),
       max_id: beforeId, min_id: afterId, pinned, include_nsfw: includeNsfw,
       sort_by: sortBy, sort_order: sortOrder, limit: requested, offset: nextOffset,
-    });
+    }, { signal });
+    signal?.throwIfAborted();
     pagesFetched += 1;
     totalResults = Number.isFinite(result.total_results) ? result.total_results : totalResults;
     doingHistoricalIndex ||= Boolean(result.doing_deep_historical_index);
