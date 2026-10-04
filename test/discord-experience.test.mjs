@@ -91,11 +91,13 @@ test('editable progress keeps one message and exports factual bounded details wi
   await progress.receive({ stage: 'completed', toolName: 'discord_message_context', resultCount: 7, result: 'private content' });
   assert.equal(calls.filter((call) => call.kind === 'send').length, 1);
   assert.equal(calls.filter((call) => call.kind === 'edit').length, 2);
-  assert.equal(calls.at(-1).payload.content, 'I’ve read *7* messages around it.');
+  assert.equal(calls.at(-1).payload.content, 'I’m currently searching the server for messages.\nI’ve read *7* messages around it.', 'earlier steps stay in the log');
   assert.ok(!JSON.stringify(progress.details()).includes('private'));
   assert.deepEqual(progress.details().at(-1), { toolName: 'discord_message_context', stage: 'completed', elapsedMs: 2500, resultCount: 7 });
   await progress.finish();
-  assert.equal(calls.at(-1).kind, 'delete');
+  assert.equal(calls.at(-1).kind, 'edit', 'the log is condensed, not deleted');
+  assert.equal(calls.at(-1).payload.content, 'I read the conversation around a message.');
+  assert.deepEqual(calls.at(-1).payload.components, [], 'buttons are removed once the answer is done');
 });
 
 test('temporary status reactions do not remove natural bot reactions', async () => {

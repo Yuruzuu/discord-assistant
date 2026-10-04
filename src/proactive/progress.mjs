@@ -37,27 +37,42 @@ const host = (url) => { try { return new URL(url).hostname; } catch { return 'th
 const filename = (file) => quote(String(file || 'that file').split(/[\\/]/).at(-1));
 
 const activities = {
-  discord_list_servers: { category: 'servers', start: () => 'I’m checking which servers I can see.', done: (_, count) => (Number.isSafeInteger(count) ? `I can see ${plural(count, 'server')}.` : 'I’ve checked the servers I can see.') },
-  discord_list_channels: { category: 'channels', start: () => 'I’m looking through the server’s channels.', done: (_, count) => (Number.isSafeInteger(count) ? `I found ${plural(count, 'channel')} and threads to look through.` : 'I’ve looked through the server’s channels.') },
-  discord_find_members: { category: 'members', start: (args) => `I’m looking up members matching ${quote(args?.query || '')}.`, done: (args, count) => `I looked up members matching ${quote(args?.query || '')}${found(count, 'match')}.` },
-  discord_search_messages: { category: 'search', start: (args) => `I’m currently searching ${searchSubject(args)}.`, done: (args, count) => `I’m currently searching ${searchSubject(args)}${found(count)}.` },
-  discord_read_activity: { category: 'search', start: (args) => `I’m reading everything posted in ${activitySubject(args)}.`, done: (args, count) => `I’ve read everything posted in ${activitySubject(args)}${found(count, 'message')}.` },
-  discord_search_batch: { category: 'search', start: (args) => `I’m currently searching ${batchSubject(args)}.`, done: (args, count) => `I searched ${batchSubject(args)}${found(count)}.` },
-  discord_message_context: { category: 'context', start: (args) => `I’m reading the conversation around that message${snowflake.test(args?.channelId) ? ` in <#${args.channelId}>` : ''}.`, done: (_, count) => (Number.isSafeInteger(count) ? `I’ve read ${plural(count, 'message')} around it.` : 'I’ve read the surrounding conversation.') },
-  discord_browse_messages: { category: 'context', start: (args) => `I’m reading more of ${snowflake.test(args?.channelId) ? `<#${args.channelId}>` : 'the conversation'}.`, done: (args, count) => `I’ve read ${Number.isSafeInteger(count) ? plural(count, 'message') : 'more messages'}${snowflake.test(args?.channelId) ? ` from <#${args.channelId}>` : ''}.` },
-  discord_user_info: { category: 'profile', start: (args) => `I’m checking ${snowflake.test(args?.userId) ? `<@${args.userId}>’s` : 'that'} profile.`, done: (args) => `I’ve checked ${snowflake.test(args?.userId) ? `<@${args.userId}>’s` : 'that'} profile.` },
-  discord_research_topic: { category: 'topic research', start: (args) => `I’m researching ${quote(args?.query || '')} across the server’s discussions.`, done: (args) => `I’ve gathered what people said about ${quote(args?.query || '')}.` },
-  voice_transcribe: { category: 'voice transcription', start: () => 'I’m transcribing your voice note.', done: () => 'I’ve transcribed your voice note.' },
-  image_read: { category: 'images', start: () => 'I’m looking at the images you sent.', done: () => 'I’ve looked at the images.' },
-  reply_context: { category: 'reply context', start: () => 'I’m loading the message you replied to.', done: () => 'I’ve loaded the message you replied to.' },
-  web_read_link: { category: 'linked page', start: (args) => `I’m reading ${host(args?.url)}.`, done: (args) => `I’ve read ${host(args?.url)}.` },
-  apps_list_tools: { category: 'connected apps', start: (args) => `I’m checking what ${args?.app ? `your ${appName(args.app)}` : 'your connected apps'} can do.`, done: (args) => `I’ve checked ${args?.app ? `your ${appName(args.app)}` : 'your connected apps'}.` },
-  apps_call_tool: { category: 'connected app', start: (args) => `I’m checking your ${appName(args?.tool)}.`, done: (args) => `I’ve checked your ${appName(args?.tool)}.` },
-  project_list: { category: 'projects', start: () => 'I’m checking your approved projects.', done: () => 'I’ve checked your approved projects.' },
-  project_search: { category: 'project search', start: (args) => `I’m searching your project files for ${quote(args?.query || '')}.`, done: (args, count) => `I searched your project files for ${quote(args?.query || '')}${found(count, 'match')}.` },
-  project_read_file: { category: 'project file', start: (args) => `I’m reading ${filename(args?.file)} from your project.`, done: (args) => `I’ve read ${filename(args?.file)}.` },
-  read_tool_result: { category: 'stored results', start: () => 'I’m going through the rest of those results.', done: () => 'I’ve gone through more of those results.' },
+  discord_list_servers: { category: 'servers', start: () => 'I’m checking which servers I can see.', done: (_, count) => (Number.isSafeInteger(count) ? `I’ve found ${plural(count, 'server')} I can see.` : 'I’ve checked the servers I can see.'), summary: () => ['checked', 'which servers I can see'] },
+  discord_list_channels: { category: 'channels', start: () => 'I’m looking through the server’s channels.', done: (_, count) => (Number.isSafeInteger(count) ? `I’ve looked through ${plural(count, 'channel')} and threads.` : 'I’ve looked through the server’s channels.'), summary: () => ['looked through', 'the server’s channels'] },
+  discord_find_members: { category: 'members', start: (args) => `I’m looking up members matching ${quote(args?.query || '')}.`, done: (args, count) => `I’ve looked up members matching ${quote(args?.query || '')}${found(count, 'match')}.`, summary: (args) => ['looked up', `members matching ${quote(args?.query || '')}`] },
+  discord_search_messages: { category: 'search', start: (args) => `I’m currently searching ${searchSubject(args)}.`, done: (args, count) => `I’ve searched ${searchSubject(args)}${found(count)}.`, summary: (args) => ['searched', searchSubject(args)] },
+  discord_read_activity: { category: 'search', start: (args) => `I’m reading everything posted in ${activitySubject(args)}.`, done: (args, count) => `I’ve read everything posted in ${activitySubject(args)}${found(count, 'message')}.`, summary: (args) => ['read', `everything posted in ${activitySubject(args)}`] },
+  discord_search_batch: { category: 'search', start: (args) => `I’m currently searching ${batchSubject(args)}.`, done: (args, count) => `I’ve searched ${batchSubject(args)}${found(count)}.`, summary: (args) => ['searched', batchSubject(args)] },
+  discord_message_context: { category: 'context', start: (args) => `I’m reading the conversation around that message${snowflake.test(args?.channelId) ? ` in <#${args.channelId}>` : ''}.`, done: (_, count) => (Number.isSafeInteger(count) ? `I’ve read ${plural(count, 'message')} around it.` : 'I’ve read the surrounding conversation.'), summary: (args) => ['read', `the conversation around a message${snowflake.test(args?.channelId) ? ` in <#${args.channelId}>` : ''}`] },
+  discord_browse_messages: { category: 'context', start: (args) => `I’m reading more of ${snowflake.test(args?.channelId) ? `<#${args.channelId}>` : 'the conversation'}.`, done: (args, count) => `I’ve read ${Number.isSafeInteger(count) ? plural(count, 'message') : 'more messages'}${snowflake.test(args?.channelId) ? ` from <#${args.channelId}>` : ''}.`, summary: (args) => ['read', `more of ${snowflake.test(args?.channelId) ? `<#${args.channelId}>` : 'the conversation'}`] },
+  discord_user_info: { category: 'profile', start: (args) => `I’m checking ${snowflake.test(args?.userId) ? `<@${args.userId}>’s` : 'that'} profile.`, done: (args) => `I’ve checked ${snowflake.test(args?.userId) ? `<@${args.userId}>’s` : 'that'} profile.`, summary: (args) => ['checked', `${snowflake.test(args?.userId) ? `<@${args.userId}>’s` : 'a'} profile`] },
+  discord_research_topic: { category: 'topic research', start: (args) => `I’m researching ${quote(args?.query || '')} across the server’s discussions.`, done: (args) => `I’ve gathered what people said about ${quote(args?.query || '')}.`, summary: (args) => ['researched', quote(args?.query || '')] },
+  voice_transcribe: { category: 'voice transcription', start: () => 'I’m transcribing your voice note.', done: () => 'I’ve transcribed your voice note.', summary: () => ['transcribed', 'your voice note'] },
+  image_read: { category: 'images', start: () => 'I’m looking at the images you sent.', done: () => 'I’ve looked at the images.', summary: () => ['looked at', 'the images you sent'] },
+  reply_context: { category: 'reply context', start: () => 'I’m loading the message you replied to.', done: () => 'I’ve loaded the message you replied to.', summary: () => ['loaded', 'the message you replied to'] },
+  web_read_link: { category: 'linked page', start: (args) => `I’m reading ${host(args?.url)}.`, done: (args) => `I’ve read ${host(args?.url)}.`, summary: (args) => ['read', host(args?.url)] },
+  apps_list_tools: { category: 'connected apps', start: (args) => `I’m checking what ${args?.app ? `your ${appName(args.app)}` : 'your connected apps'} can do.`, done: (args) => `I’ve checked ${args?.app ? `your ${appName(args.app)}` : 'your connected apps'}.`, summary: (args) => ['checked', args?.app ? `your ${appName(args.app)}` : 'your connected apps'] },
+  apps_call_tool: { category: 'connected app', start: (args) => `I’m checking your ${appName(args?.tool)}.`, done: (args) => `I’ve checked your ${appName(args?.tool)}.`, summary: (args) => ['checked', `your ${appName(args?.tool)}`] },
+  project_list: { category: 'projects', start: () => 'I’m checking your approved projects.', done: () => 'I’ve checked your approved projects.', summary: () => ['checked', 'your approved projects'] },
+  project_search: { category: 'project search', start: (args) => `I’m searching your project files for ${quote(args?.query || '')}.`, done: (args, count) => `I’ve searched your project files for ${quote(args?.query || '')}${found(count, 'match')}.`, summary: (args) => ['searched', `your project files for ${quote(args?.query || '')}`] },
+  project_read_file: { category: 'project file', start: (args) => `I’m reading ${filename(args?.file)} from your project.`, done: (args) => `I’ve read ${filename(args?.file)}.`, summary: (args) => ['read', filename(args?.file)] },
+  read_tool_result: { category: 'stored results', start: () => 'I’m going through the rest of those results.', done: () => 'I’ve gone through more of those results.', summary: () => ['went through', 'more of those results'] },
 };
+// The final edit condenses the log into one sentence, grouping repeated verbs: "I checked your connected apps and your Gmail, and searched …".
+function summarize(entries) {
+  const groups = new Map();
+  for (const entry of entries) {
+    if (entry.stage !== 'done') continue;
+    const [verb, object] = activities[entry.toolName].summary(entry.args, entry.count);
+    if (!groups.has(verb)) groups.set(verb, []);
+    if (!groups.get(verb).includes(object)) groups.get(verb).push(object);
+  }
+  const clauses = [...groups].map(([verb, objects]) => `${verb} ${listed(objects, (object) => object)}`);
+  const failed = entries.filter((entry) => entry.stage === 'failed').length;
+  let text = clauses.length ? `I ${clauses.length > 1 ? `${clauses.slice(0, -1).join(', ')}, and ${clauses.at(-1)}` : clauses[0]}.` : '';
+  if (failed) text += ` ${failed === 1 ? 'One lookup' : `*${failed}* lookups`} didn’t work.`;
+  return text.trim().slice(0, 1900);
+}
 const failedText = (activity) => (activity.category === 'search' ? 'That search didn’t go through, so I don’t have those results yet.' : 'That lookup didn’t work, so I don’t have those results yet.');
 
 export function createProgressReporter({ send, edit, remove, signal, now = Date.now, intervalMs = 1500, maxMessages = 3, onSent = () => {}, onError = () => {} }) {
@@ -73,28 +88,67 @@ export function createProgressReporter({ send, edit, remove, signal, now = Date.
   let lastEditAt = -Infinity;
   const details = [];
 
-  async function reportEditable(event, deliverySignal) {
-    const activity = Object.hasOwn(activities, event?.toolName) ? activities[event.toolName] : null;
-    if (!activity || !['started', 'completed', 'failed'].includes(event.stage)) return;
-    const timestamp = now();
-    if (event.stage === 'started') startedAt.set(event.toolName, timestamp);
-    const elapsedMs = Math.max(0, timestamp - (startedAt.get(event.toolName) ?? timestamp));
-    const resultCount = Number.isSafeInteger(event.resultCount) && event.resultCount >= 0 ? event.resultCount : undefined;
-    details.push({ toolName: event.toolName, stage: event.stage, elapsedMs, ...(resultCount === undefined ? {} : { resultCount }) });
-    if (details.length > 50) details.shift();
-    let content = activity.start(event.arguments);
-    if (event.stage === 'completed') content = activity.done(event.arguments, resultCount);
-    if (event.stage === 'failed') content = failedText(activity);
-    if (content === displayed || (event.stage !== 'failed' && receipt && timestamp - lastEditAt < intervalMs && !(event.stage === 'completed' && activity.category === 'search'))) return;
-    if (!receipt && attempted >= maxMessages) return;
+  // Editable mode keeps one message as a running log: a line per tool call, edited from "I'm …" to "I've …" when it finishes.
+  const entries = [];
+  let dirty = false;
+  let flushTimer = null;
+
+  function lineFor(entry) {
+    const activity = activities[entry.toolName];
+    if (entry.stage === 'failed') return failedText(activity);
+    return entry.stage === 'done' ? activity.done(entry.args, entry.count) : activity.start(entry.args);
+  }
+
+  function renderLog() {
+    const lines = entries.map(lineFor);
+    let first = 0;
+    const size = (from) => lines.slice(from).reduce((total, line) => total + line.length + 1, 0);
+    while (first < lines.length - 1 && size(first) > 1850) first += 1;
+    return `${first ? `…and *${first}* earlier ${first === 1 ? 'step' : 'steps'}\n` : ''}${lines.slice(first).join('\n')}`;
+  }
+
+  async function flush(deliverySignal) {
+    if (!dirty || closed) return;
+    dirty = false;
+    const content = renderLog();
+    if (content === displayed || (!receipt && attempted >= maxMessages)) return;
     const sendSignal = AbortSignal.any([cancellation.signal, signal, deliverySignal].filter(Boolean));
     try {
       sendSignal.throwIfAborted();
       if (receipt) await edit(receipt, content, sendSignal);
       else { attempted += 1; receipt = await send(content, sendSignal, 0); onSent(receipt); }
       displayed = content;
-      lastEditAt = timestamp;
+      lastEditAt = now();
     } catch (error) { if (!sendSignal.aborted) onError(error); }
+  }
+
+  async function reportEditable(event, deliverySignal) {
+    const activity = Object.hasOwn(activities, event?.toolName) ? activities[event.toolName] : null;
+    if (!activity || !['started', 'completed', 'failed'].includes(event.stage)) return;
+    const timestamp = now();
+    const timingKey = event.callId || event.toolName;
+    if (event.stage === 'started') startedAt.set(timingKey, timestamp);
+    const elapsedMs = Math.max(0, timestamp - (startedAt.get(timingKey) ?? timestamp));
+    const resultCount = Number.isSafeInteger(event.resultCount) && event.resultCount >= 0 ? event.resultCount : undefined;
+    details.push({ toolName: event.toolName, stage: event.stage, elapsedMs, ...(resultCount === undefined ? {} : { resultCount }) });
+    if (details.length > 50) details.shift();
+    if (event.stage === 'started') entries.push({ callId: event.callId || null, toolName: event.toolName, args: event.arguments, stage: 'started' });
+    else {
+      const entry = entries.find((item) => item.stage === 'started' && item.toolName === event.toolName && (event.callId ? item.callId === event.callId : !item.callId))
+        || entries.find((item) => item.stage === 'started' && item.toolName === event.toolName);
+      const stage = event.stage === 'completed' ? 'done' : 'failed';
+      if (entry) Object.assign(entry, { stage, count: resultCount, args: event.arguments ?? entry.args });
+      else entries.push({ callId: event.callId || null, toolName: event.toolName, args: event.arguments, stage, count: resultCount });
+    }
+    if (entries.length > 60) entries.shift();
+    dirty = true;
+    const wait = receipt ? intervalMs - (timestamp - lastEditAt) : 0;
+    if (wait <= 0) { await flush(deliverySignal); return; }
+    // Throttled edits are deferred, never dropped, so the log always catches up with the latest finished step.
+    if (!flushTimer) {
+      flushTimer = setTimeout(() => { flushTimer = null; queued = queued.then(() => flush()); }, wait);
+      flushTimer.unref?.();
+    }
   }
 
   async function report(event, deliverySignal) {
@@ -134,18 +188,26 @@ export function createProgressReporter({ send, edit, remove, signal, now = Date.
       queued = queued.then(() => report(event, deliverySignal));
       return queued;
     },
-    close: () => { closed = true; cancellation.abort(); },
+    close: () => { closed = true; cancellation.abort(); clearTimeout(flushTimer); flushTimer = null; },
     details: () => details.map((entry) => ({ ...entry })),
     finish: async ({ failed = false, cancelled = false, signal: finishSignal } = {}) => {
       closed = true;
       cancellation.abort();
+      clearTimeout(flushTimer);
+      flushTimer = null;
       await queued;
       if (!receipt || finishSignal?.aborted) return;
       try {
-        if (cancelled) await edit?.(receipt, 'Stopped this answer.', finishSignal);
-        else if (failed) await edit?.(receipt, 'This answer stopped before it finished. Use /nova status for details or try again.', finishSignal);
-        else if (remove) await remove(receipt, finishSignal);
-        else await edit?.(receipt, 'Finished checking.', finishSignal);
+        // The log stays until the answer is over; then it becomes a one-sentence summary (or keeps the steps with a stop note) and loses its buttons.
+        const log = entries.length ? `${renderLog()}\n` : '';
+        if (cancelled) await edit?.(receipt, `${log}Stopped this answer.`, finishSignal, { components: [] });
+        else if (failed) await edit?.(receipt, `${log}This answer stopped before it finished. Use /nova status for details or try again.`, finishSignal, { components: [] });
+        else {
+          const summary = summarize(entries);
+          if (summary) await edit?.(receipt, summary, finishSignal, { components: [] });
+          else if (remove) await remove(receipt, finishSignal);
+          else await edit?.(receipt, 'Finished checking.', finishSignal, { components: [] });
+        }
       } catch (error) { if (!finishSignal?.aborted) onError(error); }
     },
   };

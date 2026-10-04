@@ -91,7 +91,7 @@ export function createConversationReply({ command = process.env.CODEX_CLI_PATH |
     const operation = Promise.resolve().then(async () => {
       try {
         turn.signal.throwIfAborted();
-        await turn.onProgress?.({ stage: 'started', toolName: parameters.tool, arguments: parameters.arguments }, turn.signal);
+        await turn.onProgress?.({ stage: 'started', toolName: parameters.tool, callId: parameters.callId, arguments: parameters.arguments }, turn.signal);
         turn.signal.throwIfAborted();
         const toolSignal = AbortSignal.any([turn.signal, AbortSignal.timeout(toolTimeoutMs)]);
         let abortTool;
@@ -114,11 +114,11 @@ export function createConversationReply({ command = process.env.CODEX_CLI_PATH |
           turn.results.set(callKey, { fingerprint: resultFingerprint, repetitions: previous?.fingerprint === resultFingerprint ? previous.repetitions + 1 : 1 });
         }
         turn.signal.throwIfAborted();
-        await turn.onProgress?.({ stage: 'completed', toolName: parameters.tool, arguments: parameters.arguments, resultCount: result.resultCount }, turn.signal);
+        await turn.onProgress?.({ stage: 'completed', toolName: parameters.tool, callId: parameters.callId, arguments: parameters.arguments, resultCount: result.resultCount }, turn.signal);
         return { success: result.success, contentItems: result.contentItems };
       } catch (error) {
         turn.failures.set(callKey, (turn.failures.get(callKey) || 0) + 1);
-        if (!turn.signal.aborted) await turn.onProgress?.({ stage: 'failed', toolName: parameters.tool, arguments: parameters.arguments }, turn.signal);
+        if (!turn.signal.aborted) await turn.onProgress?.({ stage: 'failed', toolName: parameters.tool, callId: parameters.callId, arguments: parameters.arguments }, turn.signal);
         return failure(turn.signal.aborted ? 'Conversation stopped.' : readTools.errorMessage(error));
       }
     });

@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { setTimeout as wait } from 'node:timers/promises';
 import { createProgressReporter } from '../src/proactive/progress.mjs';
 
 function fixture(options = {}) {
@@ -51,7 +52,7 @@ test('only a completed longer search reports its result count', async () => {
   advance(5000);
   await progress.receive({ stage: 'completed', toolName: 'discord_search_messages', resultCount: 1 });
   await progress.receive({ stage: 'completed', toolName: 'discord_search_messages', resultCount: 50 });
-  assert.deepEqual(sent.map((entry) => entry.content), ['I’m currently searching the server for messages.', 'I’m currently searching the server for messages and found *1* result.']);
+  assert.deepEqual(sent.map((entry) => entry.content), ['I’m currently searching the server for messages.', 'I’ve searched the server for messages and found *1* result.']);
   progress.close();
 });
 
@@ -128,10 +129,10 @@ test('owner cancellation edits an existing activity to stopped and never reports
   const progress = createProgressReporter({ send: async () => ({ sentMessages: [{ message: { id: 'message' } }] }), edit: async (_, content) => { edits.push(content); }, remove: async () => { removed = true; } });
   await progress.receive({ stage: 'started', toolName: 'project_search' });
   await progress.finish({ cancelled: true });
-  assert.deepEqual(edits, ['Stopped this answer.']);
+  assert.deepEqual(edits, ['I’m searching your project files for "".\nStopped this answer.']);
   assert.equal(removed, false);
   await progress.receive({ stage: 'completed', toolName: 'project_search', resultCount: 5 });
-  assert.deepEqual(edits, ['Stopped this answer.']);
+  assert.equal(edits.length, 1, 'nothing reports success after a stop');
 });
 
 test('batch searches and app calls read like an assistant, and argument text cannot inject mentions or markup', async () => {
@@ -142,12 +143,37 @@ test('batch searches and app calls read like an assistant, and argument text can
   await progress.receive({ stage: 'completed', toolName: 'discord_search_batch', arguments: { guildId: '100000000000000001', channelIds: ['200000000000000001'], searches }, resultCount: 42 });
   assert.deepEqual(lines, [
     'I’m currently searching <#200000000000000001> and <#200000000000000002> for *4* keywords: "fate", "hero bow", "crimson moon" and *1* more.',
-    'I searched <#200000000000000001> and <#200000000000000002> for *4* keywords: "fate", "hero bow", "crimson moon" and *1* more and found *42* results.',
+    'I’ve searched <#200000000000000001> and <#200000000000000002> for *4* keywords: "fate", "hero bow", "crimson moon" and *1* more and found *42* results.',
   ]);
   await progress.receive({ stage: 'started', toolName: 'apps_call_tool', arguments: { tool: 'google_drive.get_spreadsheet_cells' } });
-  assert.equal(lines.at(-1), 'I’m checking your Google Drive.');
+  assert.equal(lines.at(-1).split('\n').at(-1), 'I’m checking your Google Drive.');
   await progress.receive({ stage: 'started', toolName: 'discord_search_messages', arguments: { query: '@everyone <@&123456789012345678> **bold**\nline', channelIds: ['not-a-channel'] } });
-  assert.equal(lines.at(-1), 'I’m currently searching the server for messages with "everyone &123456789012345678 bold line".');
-  assert.ok(!/[@<>*]/.test(lines.at(-1).replace(/<#\d+>|<@\d+>/g, '')));
+  const last = lines.at(-1).split('\n').at(-1);
+  assert.equal(last, 'I’m currently searching the server for messages with "everyone &123456789012345678 bold line".');
+  assert.ok(!/[@<>*]/.test(last.replace(/<#\d+>|<@\d+>/g, '')));
   progress.close();
+});
+
+test('the progress log edits each step from doing to done, defers throttled edits, and ends as a one-sentence summary', async () => {
+  const sent = [];
+  const edits = [];
+  const progress = createProgressReporter({ intervalMs: 30,
+    send: async (content) => { sent.push(content); return { sentMessages: [{ message: { id: 'message' } }] }; },
+    edit: async (_, content, signal, options) => { edits.push({ content, options }); } });
+  await progress.receive({ stage: 'started', toolName: 'apps_list_tools', callId: 'a', arguments: {} });
+  await progress.receive({ stage: 'started', toolName: 'apps_call_tool', callId: 'b', arguments: { tool: 'gmail.search_emails' } });
+  await progress.receive({ stage: 'started', toolName: 'apps_call_tool', callId: 'c', arguments: { tool: 'google_drive.search' } });
+  await progress.receive({ stage: 'completed', toolName: 'apps_list_tools', callId: 'a', arguments: {} });
+  assert.deepEqual(sent, ['I’m checking what your connected apps can do.']);
+  assert.equal(edits.length, 0, 'edits inside the throttle window are deferred');
+  await wait(60);
+  assert.equal(edits.at(-1).content, 'I’ve checked your connected apps.\nI’m checking your Gmail.\nI’m checking your Google Drive.', 'the deferred edit catches up instead of being dropped');
+  await progress.receive({ stage: 'completed', toolName: 'apps_call_tool', callId: 'c', arguments: { tool: 'google_drive.search' } });
+  assert.equal(edits.at(-1).content, 'I’ve checked your connected apps.\nI’m checking your Gmail.\nI’ve checked your Google Drive.', 'parallel calls of one tool are matched by call ID');
+  await wait(40);
+  await progress.receive({ stage: 'completed', toolName: 'apps_call_tool', callId: 'b', arguments: { tool: 'gmail.search_emails' } });
+  await progress.receive({ stage: 'started', toolName: 'discord_search_messages', callId: 'd', arguments: { query: 'fate', channelIds: ['200000000000000001'] } });
+  await progress.receive({ stage: 'failed', toolName: 'discord_search_messages', callId: 'd', arguments: { query: 'fate', channelIds: ['200000000000000001'] } });
+  await progress.finish();
+  assert.deepEqual(edits.at(-1), { content: 'I checked your connected apps, your Gmail and your Google Drive. One lookup didn’t work.', options: { components: [] } });
 });

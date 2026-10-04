@@ -105,11 +105,11 @@ export function createReplySender(service, { guildId, channelId, listenerId, dir
     return { batchId, sentMessages: [message] };
   };
 
-  send.progress.edit = async (receipt, content, signal) => {
+  send.progress.edit = async (receipt, content, signal, { components } = {}) => {
     signal?.throwIfAborted();
     const target = await resolution;
     const messageId = receipt.sentMessages[0].message.id;
-    await target.account.client.editMessage(channelId, messageId, { content, allowed_mentions: { parse: [] } }, { signal });
+    await target.account.client.editMessage(channelId, messageId, { content, allowed_mentions: { parse: [] }, ...(components ? { components } : {}) }, { signal });
   };
   send.progress.remove = async (receipt, signal) => {
     signal?.throwIfAborted();

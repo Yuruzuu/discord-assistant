@@ -141,6 +141,17 @@ Order: **reactions → remaining (unstreamed) bubbles → files → images → c
   these render as clickable names without notifying anyone. The persona and
   formatting style (conversational, light markdown) live in `reply-style.mjs`.
 
+## Progress log (`progress.mjs`)
+
+In editable mode, one progress message is a running log with one line per tool
+call, matched by `callId`. Each line is edited from "I'm …" to "I've …" when its
+call finishes. Edits are throttled to `intervalMs` but deferred rather than
+dropped. When the answer finishes, the log becomes a single summary sentence
+that groups verbs ("I checked your connected apps and your Gmail, and searched
+…") and its buttons are removed. A stopped or failed answer keeps its steps and
+adds a closing note. Arguments are sanitized as described in
+[security-invariants.md](security-invariants.md).
+
 ## 8. After the turn
 
 `onBatchComplete` marks ingress `sent`, `failed` or `cancelled`. It also

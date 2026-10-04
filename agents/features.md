@@ -38,7 +38,7 @@ tests that cover it. Tool details are in [tools.md](tools.md).
 | **Connected apps (Gmail, Drive, GitHub, Linear, …), read-only** | owner DM tool calls `apps_list_tools`, `apps_call_tool`; `nova.json` `apps` | `connected-apps.mjs`, `read-tools.mjs`, `channel-runtime.mjs` | `connected-apps` |
 | Share app images (Slides thumbnails, Figma screenshots, image attachments) | reply plan `images` with handles from `apps_call_tool` results | `read-tools.mjs` (`shareableImages`, `sharedImage`), `reply-sender.mjs` (`images`), `discord-api.sendMessageImages` | `connected-apps` |
 | Scoped read tools during a turn | model tool calls | `read-tools.mjs`, `read-tool-registry.mjs` | `proactive-read-tools` |
-| Progress messages for tool activity, in assistant voice with sanitized arguments ("I'm currently searching #x for 'y' and found N results") | tool events with `arguments` | `progress.mjs`, `conversation.callTool` | `proactive-progress` |
+| Progress log: one line per tool call, edited from "I'm …" to "I've …", condensed into a one-sentence summary when the answer is done | tool events with `arguments` | `progress.mjs`, `conversation.callTool` | `proactive-progress` |
 | **Post in other channels from the owner DM** | reply plan `channelMessages` (≤ 3) | `reply-validation.mjs`, `read-tools.sendTarget`, `reply-sender.mjs` (`channelMessages`, `confirmation`), `engine.mjs` | `channel-messages` |
 | Images and voice notes in context | attachments | `context-media.mjs`, `voice-transcriber.mjs` | `proactive-context-tools`, `voice-transcriber` |
 | Owner memory | `remember this …`, `show memory`, `consolidate memory`, Remember button | `memory.mjs`, `memory-commands.mjs` | `memory` |
