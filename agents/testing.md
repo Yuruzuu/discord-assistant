@@ -37,7 +37,7 @@ The owner ID for fixtures is `directMessageOwnerId` from
 
 | Area | Files |
 | --- | --- |
-| Config, URL, concurrency | `config`, `discord-url`, `concurrency` |
+| Config, URL, concurrency, prompts | `config`, `discord-url`, `concurrency`, `instructions` |
 | REST client and resilience | `discord-api`, `network-recovery`, `request-optimization` |
 | Service and reading | `service`, `server`, `search-browser`, `search-batch`, `activity`, `read-tool-registry` |
 | Sending | `messaging`, `replies-users`, `reactions`, `forwarding`, `channel-messages` |

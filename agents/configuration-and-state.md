@@ -10,6 +10,7 @@
 | *(each `tokenEnv`)* | `config.mjs` | The actual token for that account. Unexpanded `${VAR}` placeholders are rejected |
 | `DISCORD_MAX_IMAGE_BYTES` / `DISCORD_MAX_IMAGES` / `DISCORD_MAX_TOTAL_IMAGE_BYTES` | `config.mjs` | Image limits (default 8 MiB / 4 / 20 MiB; max 25 MiB / 10 / 50 MiB) |
 | `DISCORD_ENV_FILE` | plugin `start.mjs` | Credentials file to load (default `$XDG_CONFIG_HOME/discord-mcp/.env`) |
+| `DISCORD_INSTRUCTIONS_DIR` | `instructions.mjs`, plugin `start.mjs` | Folder of Markdown prompts (default repo `instructions/`; the plugin uses `runtime/instructions/`) |
 | `DISCORD_PROACTIVE_ENTRYPOINT` | `index.mjs`, `controller.mjs` | Daemon script (the plugin points it at `runtime/proactive.cjs`) |
 | `DISCORD_CODEX_COMMAND` / `CODEX_CLI_PATH` | `controller.mjs`, `conversation.mjs` | Codex CLI executable (otherwise `codex`, `~/.local/bin/codex`, or the macOS ChatGPT app bundle) |
 | `XDG_CONFIG_HOME` / `XDG_DATA_HOME` | `nova-settings.mjs`, `state.mjs`, plugin | Base directories (defaults `~/.config`, `~/.local/share`) |
@@ -52,6 +53,7 @@ See `state.mjs` (`listenerTargetPaths`) for exact naming.
 | `plugins/discord/plugin.json` | `plugins/discord/.codex-plugin/plugin.json` |
 | `plugins/discord/mcp.json` | `plugins/discord/.mcp.json` |
 | `index.mjs`, `src/**` | `plugins/discord/runtime/{server,proactive,supervisor}.cjs` + `THIRD_PARTY_NOTICES.txt` (gitignored) |
+| `instructions/**` | `plugins/discord/runtime/instructions/**` (gitignored copy) |
 | `LICENSE` | `plugins/discord/LICENSE` |
 
 `.agents/plugins/marketplace.json` lists the local plugin for Codex

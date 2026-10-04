@@ -129,6 +129,7 @@ See [nova-pipeline.md](nova-pipeline.md) for the detailed lifecycle.
 | `shapes.mjs` | Output shaping, including forwarded snapshots (`forwardedFrom`, `forwarded`) |
 | `discord-url.mjs` | Snowflake checks, URL parsing, `validateCursors`, `compareSnowflakes`, snowflake timestamps |
 | `concurrency.mjs` | `createConcurrencyLimit`, `mapConcurrent` |
+| `instructions.mjs` | Loads the Markdown prompts in `/instructions` (`DISCORD_INSTRUCTIONS_DIR` overrides the location) |
 
 ### `src/proactive/`
 
@@ -150,7 +151,7 @@ See [nova-pipeline.md](nova-pipeline.md) for the detailed lifecycle.
 | `conversation.mjs` (`codex-responder.mjs` re-exports) | Codex thread lifecycle, turn execution, tool-call budget, streaming, steer, compact, reset, diagnostics |
 | `codex-pool.mjs`, `app-server.mjs` | Pooled `codex app-server` child over JSON-RPC |
 | `worker-environment.mjs` | Allow-listed environment for the Codex child |
-| `reply-style.mjs`, `reply-defaults.mjs` | Persona prompt, reply-plan JSON schema, default model, effort and tier |
+| `reply-style.mjs`, `reply-defaults.mjs` | Reply-plan JSON schema; default model, effort and tier (the persona prompt lives in `instructions/nova/`) |
 | `reply-stream.mjs` | Incremental JSON parser that emits complete `messages[]` bubbles while the model streams |
 | `reply-validation.mjs` | Validates bubbles and the final plan (catalogs, targets, limits, dedupe) |
 | `reply-sender.mjs` | Delivers bubbles, progress, files, reactions, forwards, opt-in owner buttons and status reactions via the journal |

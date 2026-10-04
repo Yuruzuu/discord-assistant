@@ -299,6 +299,8 @@ another message has arrived after the trigger. Only the first answer bubble
 uses that reference, with reply pings disabled. Longer answers can still use
 a few short bubbles.
 
+Nova's persona and rules are plain Markdown in `instructions/nova/` (see
+`instructions/README.md`); edits apply to the next conversation or `nova reset`.
 Nova writes like a conversational assistant: plain sentences and short
 paragraphs, with headings, bold emphasis and bullet lists kept for content that
 genuinely needs them. Server names are always bold and numbers italic (*396*

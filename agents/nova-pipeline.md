@@ -56,6 +56,9 @@ How one owner message becomes Nova's reply. All modules are in `src/proactive/`.
   (`worker-environment.mjs`), no approvals, and no native file or command access.
 - Each turn sends only *new* nearby messages since the last turn
   (`newestContextId`), plus up to 8 image inputs mapped by `imageSources`.
+- `baseInstructions` are read from `instructions/nova/*.md` (`loadInstructions`)
+  each time a thread starts, so prompt edits apply on the next conversation or
+  `nova reset`.
 - `outputSchema: replySchema` (`reply-style.mjs`) forces the JSON reply plan.
 - The model calls read tools as dynamic tools. These are routed to
   `readTools.call(name, args)` and limited by `maxToolCalls` (24),
@@ -139,7 +142,7 @@ Order: **reactions → remaining (unstreamed) bubbles → files → images → c
 - `mentions` is always off (`allowed_mentions.parse: []`). Nova is prompted to
   write `<#channelId>` and `<@userId>` (IDs taken from context or tool results);
   these render as clickable names without notifying anyone. The persona and
-  formatting style (conversational, light markdown) live in `reply-style.mjs`.
+  formatting style (conversational, light markdown) live in `instructions/nova/`.
 
 ## Progress log (`progress.mjs`)
 

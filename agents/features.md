@@ -31,8 +31,8 @@ tests that cover it. Tool details are in [tools.md](tools.md).
 | Trigger modes (`mentions` / `questions` / `all`) and batching | owner messages | `engine.mjs` (`receive`, `isQuestion`) | `proactive-engine` |
 | Streamed reply bubbles | model output | `reply-stream.mjs`, `conversation.mjs`, `engine.mjs` | `reply-stream`, `codex-responder` |
 | Native replies, chunking, generated text files | reply plan `messages`, `files` | `reply-sender.mjs`, `discord-chunks.mjs` | `reply-sender`, `discord-experience` |
-| Discord timestamps (`<t:unix:format>`) in replies | prompt rule plus Unix fields (`currentUnix`, transcript `[HH:MM|unix]`, `...Unix`, batch `unix`) | `reply-style.mjs`, `context.mjs`, `activity.mjs`, `search.mjs` | `activity` |
-| Owner reply buttons, attached when the model chooses | reply plan `controls` | `reply-style.mjs`, `reply-validation.mjs`, `reply-sender.mjs` (`controls`), `engine.mjs` | `reply-controls`, `reply-sender` |
+| Discord timestamps (`<t:unix:format>`) in replies | prompt rule plus Unix fields (`currentUnix`, transcript `[HH:MM|unix]`, `...Unix`, batch `unix`) | `instructions/nova/`, `context.mjs`, `activity.mjs`, `search.mjs` | `activity` |
+| Owner reply buttons, attached when the model chooses | reply plan `controls` | `reply-style.mjs`, `instructions/nova/03-reply-plan.md`, `reply-validation.mjs`, `reply-sender.mjs` (`controls`), `engine.mjs` | `reply-controls`, `reply-sender` |
 | Reactions (natural and status ⏳⚙️🔎✅⚠️⌛) | reply plan `reactions`; engine stages | `reply-sender.mjs` (`react`, `statusReaction`) | `reactions` |
 | **Forwards** | reply plan `forwards` (≤ 5), sent after bubbles and files | `reply-style.mjs`, `reply-validation.mjs`, `reply-sender.mjs` (`forwards`), `read-tools.mjs` (`forwardSource`) | `forwarding` |
 | **Connected apps (Gmail, Drive, GitHub, Linear, …), read-only** | owner DM tool calls `apps_list_tools`, `apps_call_tool`; `nova.json` `apps` | `connected-apps.mjs`, `read-tools.mjs`, `channel-runtime.mjs` | `connected-apps` |

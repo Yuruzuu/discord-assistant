@@ -26,19 +26,19 @@ tests to update.
    tripwires: the write list in `stdio.test.mjs`, and the counts in
    `plugin.test.mjs` and `read-tool-registry.test.mjs`.
 5. **Docs.** Update the README tool table and its "exposes N MCP tools" count, the guidance in
-   `plugins/discord/skills/use-discord/SKILL.md`, the server `instructions` in
-   `server.mjs` (if it changes how agents should choose tools),
+   `plugins/discord/skills/use-discord/SKILL.md`, `instructions/mcp-server.md`
+   (if it changes how agents should choose tools),
    [tools.md](tools.md) and [features.md](features.md).
 
 ## Add a Nova reply-plan action
 
 Use the `forwards` field as the reference implementation.
 
-1. **Schema and prompt** (`reply-style.mjs`): add the property to `replySchema`
-   and to `required` (the Codex output schema requires every key). Describe when
-   to use it in `replyStyle`. Add a host-behaviour sentence to the
-   `instructions` in `conversation.mjs` ("the host validates and executes…;
-   don't claim success early").
+1. **Schema** (`reply-style.mjs`): add the property to `replySchema` and to
+   `required` (the Codex output schema requires every key).
+   **Prompt** (`instructions/nova/03-reply-plan.md`): describe when to use it
+   and what the host does with it ("the host validates and executes…; don't
+   claim success early").
 2. **Streaming allow-list** (`reply-stream.mjs`): add the key to the
    allowed-keys array, or every turn will abort.
 3. **Validation** (`reply-validation.mjs`): add a strict zod schema with a
@@ -92,6 +92,15 @@ Use the `forwards` field as the reference implementation.
 4. Check that it's owner-gated (every handler checks `userId ===
    directMessageOwnerId`).
 5. Add tests in `nova-controls.test.mjs`.
+
+## Change Nova's behaviour or tone
+
+Edit the Markdown in `instructions/nova/`. The files are joined in name order,
+so you can add a topic as a new numbered file. Use `<!-- comments -->` for
+notes, and `{{ownerUserId}}` is the only placeholder. Run
+`node --test test/instructions.test.mjs` (it asserts that key rules are still
+present), then restart the listener or send `nova reset`. Hard limits belong in
+code, not in prompts.
 
 ## Release
 

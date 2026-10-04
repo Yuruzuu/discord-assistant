@@ -44,6 +44,7 @@ src/
   search.mjs, message-browser.mjs, users.mjs, reactions.mjs, discord-url.mjs, config.mjs
   tool-results.mjs         register(), success(), failure(), annotations
   proactive/               Nova: controller, supervisor, daemon, gateway, engine, Codex turn, sender…
+instructions/              Markdown prompts: nova/*.md (Nova's persona and rules), mcp-server.md
 plugins/discord/           plugin manifest sources (plugin.json, mcp.json), launcher, skill, generated runtime
 scripts/build-plugin.mjs   esbuild bundle + generated manifests + third-party notices
 test/                      node:test suites (one per area) + helpers/codex-app-server.mjs
@@ -61,7 +62,8 @@ agents/                    detailed docs for agents (catalog below)
 | [security-invariants.md](agents/security-invariants.md) | changing anything about access, scope, sending, or files (**must read**) |
 | [configuration-and-state.md](agents/configuration-and-state.md) | dealing with env vars, credentials, on-disk state |
 | [testing.md](agents/testing.md) | writing or debugging tests |
-| [playbooks.md](agents/playbooks.md) | doing a common change: new tool, new Nova reply action, release |
+| [playbooks.md](agents/playbooks.md) | doing a common change: new tool, new Nova reply action, prompt edits, release |
+| [instructions/README.md](instructions/README.md) | editing Nova's persona, rules or the MCP server instructions |
 
 ## Rules that must not break
 
