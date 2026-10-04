@@ -132,8 +132,6 @@ export function createConversationReply({ command = process.env.CODEX_CLI_PATH |
     if (closed) { await reset(); throw new Error('The Codex conversation is stopped'); }
     server = await acquireCodexServer({ command, env: responderEnvironment(), spawnImpl, onNotification: receive, onToolCall: callTool, onFailure: failTurn });
     if (closed) { await reset(); throw new Error('The Codex conversation is stopped'); }
-    await server.request('initialize', { clientInfo: { name: 'nova-discord', title: 'Nova Discord', version: '2.9.0' }, capabilities: { experimentalApi: true } });
-    server.notify('initialized');
     if (requireSubscription) {
       const account = await server.request('account/read', { refreshToken: false });
       if (account.account?.type !== 'chatgpt') throw new Error('Nova requires a saved ChatGPT subscription login. Run codex login with your ChatGPT account before starting it.');

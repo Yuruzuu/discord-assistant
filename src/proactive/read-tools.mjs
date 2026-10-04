@@ -145,10 +145,16 @@ export function createDiscordReadTools(service, scope, options = {}) {
       }
       const collections = ['messages', 'members', 'channels', 'servers', 'conversations', 'matches'];
       for (const field of collections) {
-        if (!Array.isArray(structured[field])) continue;
-        const original = structured[field].length;
-        while (structured[field].length > 1 && Buffer.byteLength(JSON.stringify(structured)) > budget) structured[field] = structured[field].slice(0, -1);
-        if (structured[field].length < original) structured.partial = { returned: structured[field].length, available: original, field, nextStep: 'Use a narrower query or smaller page; follow source links and navigation for omitted evidence.' };
+        const items = structured[field];
+        if (!Array.isArray(items)) continue;
+        const fits = (count) => { structured[field] = items.slice(0, count); return Buffer.byteLength(JSON.stringify(structured)) <= budget; };
+        if (items.length <= 1 || fits(items.length)) continue;
+        // Binary search for the longest fitting prefix (at least one item) instead of re-serializing once per dropped item.
+        let low = 1;
+        let high = items.length - 1;
+        while (low < high) { const middle = Math.ceil((low + high) / 2); if (fits(middle)) low = middle; else high = middle - 1; }
+        structured[field] = items.slice(0, low);
+        structured.partial = { returned: low, available: items.length, field, nextStep: 'Use a narrower query or smaller page; follow source links and navigation for omitted evidence.' };
       }
       text = JSON.stringify(structured);
       if (Buffer.byteLength(text) > budget) {

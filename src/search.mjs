@@ -21,6 +21,15 @@ export async function searchMessages(service, {
   if (typeof query !== 'string' || query.length > 1024) throw new Error('Search query must be at most 1024 characters');
 
   const account = accountId ? service.accountById(accountId) : await service.accountForGuild(guildId);
+  const uniqueSorted = (values) => [...new Set(values)].sort();
+  const filters = {
+    content: query || undefined,
+    channel_id: uniqueSorted(channelIds), author_id: uniqueSorted(authorIds),
+    mentions: uniqueSorted(mentionsUserIds), replied_to_message_id: uniqueSorted(repliedToMessageIds),
+    has: uniqueSorted(has), embed_type: uniqueSorted(embedTypes),
+    max_id: beforeId, min_id: afterId, pinned, include_nsfw: includeNsfw,
+    sort_by: sortBy, sort_order: sortOrder,
+  };
   const messages = new Map();
   const threads = new Map();
   let nextOffset = offset;
@@ -30,14 +39,7 @@ export async function searchMessages(service, {
   while (messages.size < limit && nextOffset <= maximumOffset && pagesFetched < 20) {
     signal?.throwIfAborted();
     const requested = Math.min(pageSize, limit - messages.size, maximumOffset + pageSize - nextOffset);
-    const result = await account.client.searchGuildMessages(guildId, {
-      content: query || undefined,
-      channel_id: [...new Set(channelIds)].sort(), author_id: [...new Set(authorIds)].sort(),
-      mentions: [...new Set(mentionsUserIds)].sort(), replied_to_message_id: [...new Set(repliedToMessageIds)].sort(),
-      has: [...new Set(has)].sort(), embed_type: [...new Set(embedTypes)].sort(),
-      max_id: beforeId, min_id: afterId, pinned, include_nsfw: includeNsfw,
-      sort_by: sortBy, sort_order: sortOrder, limit: requested, offset: nextOffset,
-    }, { signal });
+    const result = await account.client.searchGuildMessages(guildId, { ...filters, limit: requested, offset: nextOffset }, { signal });
     signal?.throwIfAborted();
     pagesFetched += 1;
     totalResults = Number.isFinite(result.total_results) ? result.total_results : totalResults;

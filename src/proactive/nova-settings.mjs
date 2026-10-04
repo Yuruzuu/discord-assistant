@@ -1,9 +1,9 @@
-import { mkdir, readFile, writeFile, rename } from 'node:fs/promises';
+import { mkdir, readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join, dirname, isAbsolute } from 'node:path';
-import { randomUUID } from 'node:crypto';
 import { z } from 'zod/v4';
 import { directMessageOwnerId } from './target.mjs';
+import { writeFileAtomic } from './state.mjs';
 
 const conversationSchema = z.object({
   model: z.string().min(1).max(128).optional(), reasoningEffort: z.string().regex(/^[a-z][a-z0-9_-]{0,31}$/).optional(),
@@ -41,28 +41,25 @@ export function createNovaSettings({ filename = novaSettingsPath() } = {}) {
   async function save(value, userId) {
     if (userId !== directMessageOwnerId) throw new Error('Only the owner can change Nova settings');
     const parsed = settingsSchema.parse(value);
-    const operation = writes.catch(() => {}).then(async () => {
+    return serialize(async () => {
       await mkdir(dirname(filename), { recursive: true, mode: 0o700 });
-      const temporary = `${filename}.${randomUUID()}.tmp`;
-      await writeFile(temporary, JSON.stringify(parsed, null, 2) + '\n', { mode: 0o600 });
-      await rename(temporary, filename);
+      await writeFileAtomic(filename, JSON.stringify(parsed, null, 2) + '\n');
       return parsed;
     });
-    writes = operation;
-    return operation;
   }
   async function configureConversation(accountId, channelId, patch, userId) {
     if (userId !== directMessageOwnerId) throw new Error('Only the owner can change Nova settings');
     const target = conversationFile(accountId, channelId);
-    const operation = writes.catch(() => {}).then(async () => {
+    return serialize(async () => {
       const value = await load(accountId, channelId);
       const selected = { ...value.conversations[`${accountId}:${channelId}`], ...conversationSchema.parse(patch) };
       await mkdir(dirname(target), { recursive: true, mode: 0o700 });
-      const temporary = `${target}.${randomUUID()}.tmp`;
-      await writeFile(temporary, JSON.stringify(selected), { mode: 0o600 });
-      await rename(temporary, target);
+      await writeFileAtomic(target, JSON.stringify(selected));
       return selected;
     });
+  }
+  function serialize(task) {
+    const operation = writes.catch(() => {}).then(task);
     writes = operation;
     return operation;
   }

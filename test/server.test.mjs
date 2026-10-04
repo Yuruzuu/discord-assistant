@@ -22,3 +22,29 @@ test('returns compact JSON without changing structured MCP results', async () =>
     await server.close();
   }
 });
+
+test('routes discord_browse_messages through the shared browser', async () => {
+  const guildId = '100000000000000001';
+  const channelId = '200000000000000001';
+  const author = { id: '400000000000000001', username: 'reader' };
+  const history = [{ id: '300000000000000002', content: 'newer', author }, { id: '300000000000000001', content: 'older', author }];
+  const service = {
+    normalizeReadSource: ({ channelId: id }) => ({ guildId: null, channelId: id, messageId: null, url: null }),
+    resolveChannel: async () => ({ account: { id: 'reader', client: { listMessages: async () => history } }, channel: { id: channelId, guild_id: guildId, type: 0 } }),
+  };
+  const server = createDiscordMcpServer(service);
+  const client = new Client({ name: 'test-client', version: '1.0.0' });
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  await server.connect(serverTransport);
+  await client.connect(clientTransport);
+  try {
+    const result = await client.callTool({ name: 'discord_browse_messages', arguments: { channelId, limit: 10 } });
+    assert.equal(result.isError, undefined);
+    assert.deepEqual(result.structuredContent.messages.map((message) => message.content), ['older', 'newer']);
+    assert.deepEqual(result.structuredContent.cursors, { oldest: history[1].id, newest: history[0].id });
+    assert.equal('toolImages' in result.structuredContent, false);
+  } finally {
+    await client.close();
+    await server.close();
+  }
+});

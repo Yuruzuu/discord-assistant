@@ -25,6 +25,7 @@ export function createProjectReader(roots = []) {
   }
   async function search({ projectId, query, limit = 40 }, signal) {
     const { root } = await locate(projectId);
+    const needle = query.toLowerCase();
     const matches = []; let visited = 0; let truncated = false;
     async function walk(directory) {
       for (const entry of await readdir(directory, { withFileTypes: true })) {
@@ -38,7 +39,7 @@ export function createProjectReader(roots = []) {
           const info = await stat(resolved); if (info.size > 256 * 1024) continue;
           const text = await readFile(resolved, 'utf8'); if (text.includes('\0')) continue;
           const lines = text.split('\n');
-          for (let index = 0; index < lines.length && matches.length < limit; index += 1) if (lines[index].toLowerCase().includes(query.toLowerCase())) matches.push({ file: path.relative(root, target), line: index + 1, text: lines[index].slice(0, 500) });
+          for (let index = 0; index < lines.length && matches.length < limit; index += 1) if (lines[index].toLowerCase().includes(needle)) matches.push({ file: path.relative(root, target), line: index + 1, text: lines[index].slice(0, 500) });
         }
       }
     }

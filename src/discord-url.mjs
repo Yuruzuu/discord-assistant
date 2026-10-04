@@ -19,6 +19,13 @@ export function assertSnowflake(value, label) {
   return value;
 }
 
+export function validateCursors({ before, after, around }) {
+  if ([before, after, around].filter(Boolean).length > 1) throw new Error('Use only one of before, after, or around');
+  for (const [name, value] of Object.entries({ before, after, around })) {
+    if (value) assertSnowflake(value, name);
+  }
+}
+
 export function parseDiscordUrl(input) {
   if (typeof input !== 'string' || !input.trim()) throw new Error('Discord URL is required');
   const normalized = input.trim().replace(/^<|>$/g, '');
@@ -43,6 +50,12 @@ export function parseDiscordUrl(input) {
   if (messageId) assertSnowflake(messageId, 'messageId');
 
   return { guildId, channelId, messageId: messageId || null, url: normalized };
+}
+
+export function compareSnowflakes(left, right) {
+  const a = BigInt(left);
+  const b = BigInt(right);
+  return a < b ? -1 : a > b ? 1 : 0;
 }
 
 export function snowflakeTimestamp(value) {

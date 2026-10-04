@@ -1,9 +1,10 @@
-import { mkdir, readFile, rename, writeFile, chmod, open, unlink } from 'node:fs/promises';
+import { mkdir, readFile, chmod, open, unlink } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join, resolve as resolvePath } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { assertSnowflake } from '../discord-url.mjs';
 import { directMessageOwnerId } from './target.mjs';
+import { writeState } from './state.mjs';
 
 const openJournals = new Map();
 const retentionMs = 7 * 24 * 60 * 60 * 1000;
@@ -104,21 +105,19 @@ async function openJournal({ accountId, channelId, root, now }) {
   let closing = false;
 
   function prune(map, unfinished) {
-    for (const [key, entry] of map) if (!unfinished(entry) && entry.updatedAt < now() - retentionMs) map.delete(key);
+    const cutoff = now() - retentionMs;
+    for (const [key, entry] of map) if (!unfinished(entry) && entry.updatedAt < cutoff) map.delete(key);
     if (map.size >= maximumEntries) {
       const terminal = [...map].filter(([, entry]) => !unfinished(entry)).sort((left, right) => left[1].updatedAt - right[1].updatedAt);
       for (const [key] of terminal) { if (map.size < maximumEntries) break; map.delete(key); }
     }
   }
+  const pruneOperations = () => prune(operations, (entry) => entry.status === 'pending' || entry.status === 'unknown');
+  const pruneIngress = () => prune(ingress, (entry) => entry.status !== 'completed');
 
   async function save() {
-    const temporary = `${filename}.${randomUUID()}.tmp`;
-    const data = { version: 1, accountId, channelId, operations: [...operations.values()], ingress: [...ingress.values()] };
-    try {
-      await writeFile(temporary, JSON.stringify(data), { mode: 0o600 });
-      await rename(temporary, filename);
-      await chmod(filename, 0o600);
-    } catch (error) { await unlink(temporary).catch(() => {}); throw error; }
+    await writeState(filename, { version: 1, accountId, channelId, operations: [...operations.values()], ingress: [...ingress.values()] });
+    await chmod(filename, 0o600);
   }
 
   function serial(operation) {
@@ -145,8 +144,8 @@ async function openJournal({ accountId, channelId, root, now }) {
         ingress.set(entry.messageId, { messageId: entry.messageId, ownerUserId: directMessageOwnerId, channelId, ...(identifier(entry.guildId, 'ingress guild ID') ? { guildId: entry.guildId } : {}), createdAt: entry.createdAt, updatedAt: entry.updatedAt, status: entry.status === 'completed' ? 'completed' : 'pending', ...(entry.outcome ? { outcome: ['sent', 'skipped', 'failed', 'cancelled'].includes(entry.outcome) ? entry.outcome : 'failed' } : {}) });
       }
     }
-    prune(operations, (entry) => entry.status === 'pending' || entry.status === 'unknown');
-    prune(ingress, (entry) => entry.status !== 'completed');
+    pruneOperations();
+    pruneIngress();
     await save();
   } catch (error) { await releaseLease(); throw error; }
 
@@ -160,7 +159,7 @@ async function openJournal({ accountId, channelId, root, now }) {
       const existing = operations.get(operationId);
       if (existing?.status === 'unknown' || existing?.status === 'pending') throw new Error('Delivery outcome is uncertain; verify it before sending');
       if (existing?.status === 'sent') return copy(existing);
-      prune(operations, (entry) => entry.status === 'pending' || entry.status === 'unknown');
+      pruneOperations();
       if (!existing) requireCapacity(operations);
       const entry = { operationId, status: 'pending', createdAt: existing?.createdAt || now(), updatedAt: now(), ...metadata(value, channelId) };
       operations.set(operationId, entry);
@@ -171,7 +170,7 @@ async function openJournal({ accountId, channelId, root, now }) {
       operationKey(operationId);
       const confirmed = receipt(value, accountId, channelId);
       const existing = operations.get(operationId);
-      if (!existing) { prune(operations, (entry) => entry.status === 'pending' || entry.status === 'unknown'); requireCapacity(operations); }
+      if (!existing) { pruneOperations(); requireCapacity(operations); }
       const entry = { operationId, status: 'sent', createdAt: existing?.createdAt || now(), updatedAt: now(), ...metadata(existing || {}, channelId), receipt: confirmed };
       operations.set(operationId, entry);
       await save();
@@ -181,7 +180,7 @@ async function openJournal({ accountId, channelId, root, now }) {
       operationKey(operationId);
       const existing = operations.get(operationId);
       if (existing?.status === 'sent') return copy(existing);
-      if (!existing) { prune(operations, (entry) => entry.status === 'pending' || entry.status === 'unknown'); requireCapacity(operations); }
+      if (!existing) { pruneOperations(); requireCapacity(operations); }
       const entry = { operationId, status: 'unknown', createdAt: existing?.createdAt || now(), updatedAt: now(), ...metadata({ ...existing, ...value }, channelId) };
       operations.set(operationId, entry);
       await save();
@@ -204,7 +203,7 @@ async function openJournal({ accountId, channelId, root, now }) {
       if ((value.channelId || value.channel_id || channelId) !== channelId) throw new Error('Ingress belongs to a different channel');
       const existing = ingress.get(messageId);
       if (existing) return { claimed: false, entry: copy(existing) };
-      prune(ingress, (entry) => entry.status !== 'completed');
+      pruneIngress();
       requireCapacity(ingress);
       const guildId = identifier(value.guildId || value.guild_id, 'ingress guild ID');
       const entry = { messageId, ownerUserId: directMessageOwnerId, channelId, ...(guildId ? { guildId } : {}), createdAt: now(), updatedAt: now(), status: 'running' };

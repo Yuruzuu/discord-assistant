@@ -1,8 +1,8 @@
 import { randomUUID } from 'node:crypto';
-import { mkdir, readdir, readFile, rename, writeFile, unlink } from 'node:fs/promises';
+import { mkdir, readdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { directMessageOwnerId } from './target.mjs';
-import { proactiveRoot } from './state.mjs';
+import { proactiveRoot, writeState } from './state.mjs';
 
 const terminalStates = new Set(['completed', 'failed', 'cancelled']);
 const validId = (value) => typeof value === 'string' && /^\d{17,20}$/.test(value);
@@ -36,13 +36,7 @@ export function createResearchJobs({ service, accountId, bot, preferences = {}, 
   function persist(job) {
     const value = snapshot(job);
     const filename = join(root, `${accountId}-${job.id}.json`);
-    job.writes = job.writes.catch(() => {}).then(async () => {
-      const temporary = `${filename}.${randomUUID()}.tmp`;
-      try {
-        await writeFile(temporary, JSON.stringify(value), { mode: 0o600 });
-        await rename(temporary, filename);
-      } finally { await unlink(temporary).catch(() => {}); }
-    });
+    job.writes = job.writes.catch(() => {}).then(() => writeState(filename, value));
     job.writes.catch(() => {});
     onStatus(value);
     return job.writes;

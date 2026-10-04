@@ -1,3 +1,4 @@
+import { setTimeout as wait } from 'node:timers/promises';
 import { acceptsListenerMessage, mentionsBot, directMessageOwnerId } from './target.mjs';
 import { createProgressReporter } from './progress.mjs';
 
@@ -30,6 +31,14 @@ export function createProactiveEngine({ botUserId, guildId, channelId, directMes
 
   function report() { onStatus(status()); }
 
+  function takeAllBatches() {
+    const batches = [...pending.values(), ...queue];
+    for (const batch of pending.values()) clearTimeout(batch.timer);
+    pending.clear();
+    queue.length = 0;
+    return batches;
+  }
+
   function discard(batches) {
     discarded = discarded.catch(() => {}).then(async () => { for (const batch of batches) await onBatchComplete(batch.messages, 'cancelled'); });
     return discarded;
@@ -53,10 +62,7 @@ export function createProactiveEngine({ botUserId, guildId, channelId, directMes
     }
     else if (action === 'pause') {
       paused = true;
-      const batches = [...pending.values(), ...queue];
-      for (const batch of pending.values()) clearTimeout(batch.timer);
-      pending.clear();
-      queue.length = 0;
+      const batches = takeAllBatches();
       activeCancellation?.abort();
       await generateReply.interrupt?.();
       await sendReplies.clearStatusReactions?.();
@@ -283,10 +289,7 @@ export function createProactiveEngine({ botUserId, guildId, channelId, directMes
   function stop() {
     stopped = true;
     cancellation.abort();
-    const batches = [...pending.values(), ...queue];
-    for (const batch of pending.values()) clearTimeout(batch.timer);
-    pending.clear();
-    queue.length = 0;
+    const batches = takeAllBatches();
     for (const timer of cleanupTimers) clearTimeout(timer);
     cleanupTimers.clear();
     void Promise.resolve(sendReplies.clearStatusReactions?.()).catch(() => {});
@@ -298,4 +301,3 @@ export function createProactiveEngine({ botUserId, guildId, channelId, directMes
 
   return { receive, stop, status, control, idle };
 }
-import { setTimeout as wait } from 'node:timers/promises';

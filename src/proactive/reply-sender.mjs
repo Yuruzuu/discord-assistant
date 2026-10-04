@@ -46,6 +46,10 @@ export function createReplySender(service, { guildId, channelId, listenerId, dir
     }
   }
 
+  function batchIdFor(trigger) {
+    return createHash('sha256').update(`${listenerId}:${trigger.id}`).digest('hex').slice(0, 20);
+  }
+
   function resolve(trigger) {
     if (currentTrigger !== trigger.id) {
       currentTrigger = trigger.id;
@@ -56,7 +60,7 @@ export function createReplySender(service, { guildId, channelId, listenerId, dir
 
   const send = async (messages, trigger, signal, { offset = 0, replyToMessageId = trigger.message_reference?.message_id ? trigger.id : undefined } = {}) => {
     if (!Number.isSafeInteger(offset) || offset < 0 || offset + messages.length > 5) throw new Error('Invalid reply bubble offset');
-    const batchId = createHash('sha256').update(`${listenerId}:${trigger.id}`).digest('hex').slice(0, 20);
+    const batchId = batchIdFor(trigger);
     const sentMessages = [];
     let failedMessageIndex = offset;
     try {
@@ -91,7 +95,7 @@ export function createReplySender(service, { guildId, channelId, listenerId, dir
   send.progress = async (content, trigger, signal, { index = 0 } = {}) => {
     if (!Number.isSafeInteger(index) || index < 0 || index >= 3) throw new Error('Invalid progress message index');
     signal?.throwIfAborted();
-    const batchId = createHash('sha256').update(`${listenerId}:${trigger.id}`).digest('hex').slice(0, 20);
+    const batchId = batchIdFor(trigger);
     const target = await resolve(trigger);
     const message = await sendResolvedMessage(target, {
       content, guildId, channelId, allowMentions: false, nonce: `${batchId}:p${index}`,
@@ -117,7 +121,7 @@ export function createReplySender(service, { guildId, channelId, listenerId, dir
     if (!validated.length) return { sentMessages: [] };
     signal?.throwIfAborted();
     const target = await resolve(trigger);
-    const batchId = createHash('sha256').update(`${listenerId}:${trigger.id}`).digest('hex').slice(0, 20);
+    const batchId = batchIdFor(trigger);
     const nonce = `${batchId}:f`;
     const receipt = await deliver(`${batchId}:files`, async () => {
       let message;
@@ -138,7 +142,7 @@ export function createReplySender(service, { guildId, channelId, listenerId, dir
     if (forwards.length > 5) throw new Error('Provide at most 5 forwards');
     signal?.throwIfAborted();
     const target = await resolve(trigger);
-    const batchId = createHash('sha256').update(`${listenerId}:${trigger.id}`).digest('hex').slice(0, 20);
+    const batchId = batchIdFor(trigger);
     const sentMessages = [];
     let failedMessageIndex = 0;
     try {
@@ -189,10 +193,11 @@ export function createReplySender(service, { guildId, channelId, listenerId, dir
     await reactionQueue.catch(() => {});
     const target = await resolve(trigger);
     signal?.throwIfAborted();
-    await target.account.client.addReaction(channelId, reaction.messageId, normalizeReactionEmoji(reaction.emoji), { signal });
-    naturalReactions.add(`${reaction.messageId}:${normalizeReactionEmoji(reaction.emoji)}`);
+    const emoji = normalizeReactionEmoji(reaction.emoji);
+    await target.account.client.addReaction(channelId, reaction.messageId, emoji, { signal });
+    naturalReactions.add(`${reaction.messageId}:${emoji}`);
     if (naturalReactions.size > 1000) naturalReactions.delete(naturalReactions.values().next().value);
-    if (temporaryReactions.get(reaction.messageId) === normalizeReactionEmoji(reaction.emoji)) temporaryReactions.delete(reaction.messageId);
+    if (temporaryReactions.get(reaction.messageId) === emoji) temporaryReactions.delete(reaction.messageId);
     return { messageId: reaction.messageId, reacted: true };
   };
 

@@ -1,8 +1,8 @@
 import { shapeChannel, shapeMessage } from './shapes.mjs';
-import { assertSnowflake } from './discord-url.mjs';
+import { compareSnowflakes, validateCursors } from './discord-url.mjs';
 
 function compareMessages(left, right) {
-  return BigInt(left.id) < BigInt(right.id) ? -1 : BigInt(left.id) > BigInt(right.id) ? 1 : 0;
+  return compareSnowflakes(left.id, right.id);
 }
 
 async function readRange(client, channelId, direction, cursor, limit, signal) {
@@ -30,8 +30,7 @@ export async function browseMessages(service, {
 }, { signal } = {}) {
   signal?.throwIfAborted();
   if (!Number.isSafeInteger(limit) || limit < 1 || limit > 250) throw new Error('Browse limit must be between 1 and 250');
-  if ([before, after, around].filter(Boolean).length > 1) throw new Error('Use only one of before, after, or around');
-  for (const [name, value] of Object.entries({ before, after, around })) if (value) assertSnowflake(value, name);
+  validateCursors({ before, after, around });
   const source = service.normalizeReadSource({ url, guildId, channelId, messageId });
   if (source.messageId && (before || after || around)) throw new Error('Use a message anchor or a cursor, not both');
   const anchorId = source.messageId || around;

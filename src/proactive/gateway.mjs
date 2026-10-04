@@ -1,8 +1,7 @@
 import { Client, Events, GatewayIntentBits, Options, Partials } from 'discord.js';
 import { setTimeout as wait } from 'node:timers/promises';
-import { acceptsListenerMessage } from './target.mjs';
+import { acceptsListenerMessage, directMessageOwnerId } from './target.mjs';
 import { createGatewayStrategy } from './gateway-strategy.mjs';
-import { directMessageOwnerId } from './target.mjs';
 import { parseNovaCommand, readNovaInteraction, renderControlResult } from './controls.mjs';
 
 export function createGateway({ token, guildId, channelId, directMessages = false, allServers = false, onMessage, onControl, controlButtons, onError = () => {}, onConnection = () => {}, clientFactory = (options) => new Client(options), readyTimeoutMs = 45000, maxAttempts = 3, sleep = wait }) {

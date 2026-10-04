@@ -1,5 +1,5 @@
 import { DiscordApiClient, DiscordApiError } from './discord-api.mjs';
-import { assertSnowflake, parseDiscordUrl, snowflakeTimestamp } from './discord-url.mjs';
+import { assertSnowflake, parseDiscordUrl, snowflakeTimestamp, validateCursors } from './discord-url.mjs';
 import { CHANNEL_TYPES, imageReferences, shapeChannel, shapeMessage } from './shapes.mjs';
 import { mapConcurrent } from './concurrency.mjs';
 
@@ -20,14 +20,6 @@ function uniqueChannels(channels) {
   const byId = new Map();
   for (const channel of channels) byId.set(channel.id, channel);
   return [...byId.values()];
-}
-
-function validateCursors({ before, after, around }) {
-  const cursors = [before, after, around].filter(Boolean);
-  if (cursors.length > 1) throw new Error('Use only one of before, after, or around');
-  for (const [name, value] of Object.entries({ before, after, around })) {
-    if (value) assertSnowflake(value, name);
-  }
 }
 
 export class DiscordService {
@@ -138,16 +130,19 @@ export class DiscordService {
     return (await this.resolveGuild(guildId)).account;
   }
 
-  async resolveGuild(guildId) {
-    assertSnowflake(guildId, 'guildId');
+  async guildCandidates(guildId) {
     await this.discoverServers();
     const preferredIds = this.guildAccounts.get(guildId) || [];
-    const candidates = [
+    return [
       ...preferredIds.map((id) => this.accountById(id)),
       ...this.accounts.filter((account) => !preferredIds.includes(account.id)),
     ];
+  }
+
+  async resolveGuild(guildId) {
+    assertSnowflake(guildId, 'guildId');
     const failures = [];
-    for (const account of candidates) {
+    for (const account of await this.guildCandidates(guildId)) {
       try {
         const guild = await account.client.getGuild(guildId);
         return { account, guild };
@@ -178,15 +173,7 @@ export class DiscordService {
       this.channelAccounts.delete(channelId);
     }
 
-    let candidates = this.accounts;
-    if (guildId) {
-      await this.discoverServers();
-      const preferredIds = this.guildAccounts.get(guildId) || [];
-      candidates = [
-        ...preferredIds.map((id) => this.accountById(id)),
-        ...this.accounts.filter((account) => !preferredIds.includes(account.id)),
-      ];
-    }
+    const candidates = guildId ? await this.guildCandidates(guildId) : this.accounts;
     for (const account of candidates) {
       if (account.id === cachedId) continue;
       try {

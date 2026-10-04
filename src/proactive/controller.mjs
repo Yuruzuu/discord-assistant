@@ -44,7 +44,7 @@ export function createProactiveController(service, { entrypoint = process.env.DI
     const supervising = supervision?.enabled && processExists(supervision.pid);
     const pid = configuration.pid || saved?.pid;
     if (pid && !processExists(pid)) return { ...(saved || {}), running: Boolean(supervising), state: supervising ? 'recovering' : saved?.state === 'failed' ? 'failed' : 'stopped', ...(supervising ? { supervision } : {}) };
-    if (!configuration.controlUrl) return { ...(saved || {}), running: false, state: pid && !processExists(pid) ? 'failed' : saved?.state || 'starting' };
+    if (!configuration.controlUrl) return { ...(saved || {}), running: false, state: saved?.state || 'starting' };
     try { return await controlRequest(configuration); }
     catch (error) {
       if (saved?.state === 'failed' || saved?.state === 'stopped') return { ...saved, running: false };
