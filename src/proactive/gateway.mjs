@@ -2,8 +2,10 @@ import { Client, Events, GatewayIntentBits, Options, Partials } from 'discord.js
 import { setTimeout as wait } from 'node:timers/promises';
 import { acceptsListenerMessage } from './target.mjs';
 import { createGatewayStrategy } from './gateway-strategy.mjs';
+import { directMessageOwnerId } from './target.mjs';
+import { parseNovaCommand, readNovaInteraction, renderControlResult } from './controls.mjs';
 
-export function createGateway({ token, guildId, channelId, directMessages = false, allServers = false, onMessage, onError = () => {}, onConnection = () => {}, clientFactory = (options) => new Client(options), readyTimeoutMs = 45000, maxAttempts = 3, sleep = wait }) {
+export function createGateway({ token, guildId, channelId, directMessages = false, allServers = false, onMessage, onControl, controlButtons, onError = () => {}, onConnection = () => {}, clientFactory = (options) => new Client(options), readyTimeoutMs = 45000, maxAttempts = 3, sleep = wait }) {
   const cancellation = new AbortController();
   let closed = false;
   let client;
@@ -42,10 +44,35 @@ export function createGateway({ token, guildId, channelId, directMessages = fals
         content: message.content, timestamp: message.createdAt.toISOString(), webhook_id: message.webhookId,
         mentions: [...message.mentions.users.values()].map((user) => ({ id: user.id })),
         referenceAuthorId: message.mentions.repliedUser?.id || null,
-        message_reference: message.reference ? { message_id: message.reference.messageId } : null,
-        attachments: [...message.attachments.values()].map((attachment) => ({ url: attachment.url, filename: attachment.name, content_type: attachment.contentType })),
+        message_reference: message.reference ? { message_id: message.reference.messageId, channel_id: message.reference.channelId } : null,
+        message_snapshots: [...(message.messageSnapshots?.values() || [])].slice(0, 5).map((snapshot) => ({ message: { content: String(snapshot.content || '').slice(0, 10000),
+          attachments: [...(snapshot.attachments?.values() || [])].slice(0, 5).map((attachment) => ({ url: attachment.url, filename: attachment.name, content_type: attachment.contentType, waveform: attachment.waveform, duration_secs: attachment.duration })) } })),
+        attachments: [...message.attachments.values()].slice(0, 10).map((attachment) => ({ url: attachment.url, filename: attachment.name, content_type: attachment.contentType, waveform: attachment.waveform, duration_secs: attachment.duration, size: attachment.size })),
       };
-      Promise.resolve().then(() => onMessage(incoming)).catch(reportError);
+      const command = onControl && parseNovaCommand(incoming.content, current.user?.id || '0');
+      Promise.resolve().then(async () => {
+        if (command) {
+          const result = await onControl({ ...command, userId: incoming.author.id, channelId: incoming.channel_id, guildId: incoming.guild_id || undefined });
+          const dm = await current.rest.post('/users/@me/channels', { body: { recipient_id: directMessageOwnerId } });
+          await current.rest.post(`/channels/${dm.id}/messages`, { body: { content: renderControlResult(result), allowed_mentions: { parse: [] } } });
+        } else await onMessage(incoming);
+      }).catch(reportError);
+    });
+    current.on(Events.InteractionCreate, (interaction) => {
+      if (closed || current !== client || !onControl) return;
+      const button = interaction.isButton?.() && controlButtons?.recognizes(interaction.customId);
+      const slash = interaction.isChatInputCommand?.() && interaction.commandName === 'nova';
+      if (!button && !slash) return;
+      if (!button && Boolean(interaction.guildId) === directMessages) return;
+      Promise.resolve().then(async () => {
+        if (interaction.user.id !== directMessageOwnerId) { await interaction.reply({ content: 'Nova controls are available only to the owner.', flags: 64 }); return; }
+        await interaction.deferReply({ flags: 64 });
+        try {
+          const request = button ? controlButtons.consume(interaction.customId, { userId: interaction.user.id, channelId: interaction.channelId }) : readNovaInteraction(interaction);
+          await interaction.editReply({ content: renderControlResult(await onControl(request)) });
+        }
+        catch (error) { await interaction.editReply({ content: String(error.message).slice(0, 1800) }); }
+      }).catch(reportError);
     });
     return current;
   }

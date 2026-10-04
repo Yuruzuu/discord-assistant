@@ -71,4 +71,16 @@ export function registerProactiveTools(server, service, controller = createProac
     description: 'Inspect server-wide watching, fixed owner ID, accessible-server count and per-channel reply/cache statistics.',
     inputSchema: directMessageTarget,
   }, async (args) => success(await controller.status({ ...args, allServers: true })));
+  register(server, 'discord_nova_control', {
+    title: 'Control Owner-Only Nova Conversation',
+    description: 'Apply an explicit owner request for status, current-answer cancellation, pause/resume, model/effort/Fast, context compaction/reset, research jobs or opted-in digests. Server conversation controls use allServers:true and its guild/channel IDs; private controls use directMessages:true. Does not grant additional users access.',
+    annotations: writeAnnotations,
+    inputSchema: {
+      accountId: z.string().optional(), channelId: snowflake.optional(), guildId: snowflake.optional(), directMessages: z.boolean().default(false), allServers: z.boolean().default(false),
+      action: z.enum(['status', 'stop', 'pause', 'resume', 'details', 'reset', 'compact', 'model', 'effort', 'fast', 'budget', 'projects', 'voice', 'research', 'jobs', 'digest', 'deliveries', 'resolve-delivery']),
+      value: z.string().max(4000).optional(), operation: z.enum(['list', 'status', 'add', 'remove', 'run', 'stop']).optional(), id: z.string().max(240).optional(),
+      configuration: z.object({ guildId: snowflake, query: z.string().max(1024).default(''), authorIds: z.array(snowflake).max(25).default([]), channelIds: z.array(snowflake).max(25).default([]), intervalMinutes: z.number().int().min(15).max(10080).default(60), limit: z.number().int().min(1).max(250).default(250) }).strict().optional(),
+      delivered: z.boolean().optional(),
+    },
+  }, async (args) => success(await controller.control(args)));
 }
