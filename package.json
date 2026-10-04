@@ -17,6 +17,7 @@
   "files": [
     "index.mjs",
     "src",
+    "instructions",
     "README.md",
     "LICENSE",
     "scripts/build-plugin.mjs",

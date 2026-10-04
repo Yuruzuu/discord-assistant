@@ -1,5 +1,5 @@
 import { build } from 'esbuild';
-import { copyFile, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { copyFile, cp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -48,6 +48,8 @@ await writeFile(join(pluginRoot, '.mcp.json'), JSON.stringify({
   })),
 }, null, 2) + '\n');
 await copyFile(join(repositoryRoot, 'LICENSE'), join(pluginRoot, 'LICENSE'));
+await rm(join(runtimeRoot, 'instructions'), { recursive: true, force: true });
+await cp(join(repositoryRoot, 'instructions'), join(runtimeRoot, 'instructions'), { recursive: true });
 
 const packages = new Set(Object.keys(result.metafile.inputs)
   .filter((path) => path.startsWith('node_modules/'))

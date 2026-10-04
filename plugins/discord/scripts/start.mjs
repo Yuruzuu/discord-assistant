@@ -19,6 +19,7 @@ try {
   const runtimeUrl = new URL('../runtime/server.cjs', import.meta.url);
   if (!existsSync(fileURLToPath(runtimeUrl))) throw new Error('The Discord plugin runtime is missing. Build the plugin and reinstall it.');
   process.env.DISCORD_PROACTIVE_ENTRYPOINT ||= fileURLToPath(new URL('../runtime/proactive.cjs', import.meta.url));
+  process.env.DISCORD_INSTRUCTIONS_DIR ||= fileURLToPath(new URL('../runtime/instructions', import.meta.url));
 
   await import(runtimeUrl.href);
 } catch (error) {
