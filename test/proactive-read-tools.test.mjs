@@ -54,7 +54,7 @@ function contents(result) { return JSON.parse(result.contentItems[0].text); }
 test('owner DM tools resolve names, search other servers, preserve continuation and open message URL context', async () => {
   const { service, calls } = fixture();
   const tools = createDiscordReadTools(service, scope);
-  assert.equal(tools.definitions.length, 7);
+  assert.equal(tools.definitions.length, 10);
   assert.ok(tools.definitions.every((tool) => tool.type === 'function' && tool.inputSchema.additionalProperties === false));
   assert.equal(contents(await tools.call('discord_list_servers', {})).servers.length, 2);
   const members = contents(await tools.call('discord_find_members', { guildId, query: 'Valk' }));
@@ -105,7 +105,7 @@ test('dynamic read calls work inside a warm ephemeral conversation and report on
   try {
     await respond(context, undefined, { onProgress: async (event) => { progress.push(event); } });
     const start = server.requests.find((request) => request.method === 'thread/start').params;
-    assert.equal(start.dynamicTools.length, 7);
+    assert.equal(start.dynamicTools.length, 10);
     assert.equal(start.config.features.shell_tool, false);
     assert.equal(start.config.permissions[start.permissions].network.enabled, false);
     assert.ok(server.toolResponses.slice(0, 3).every((response) => response.result.success));
@@ -125,7 +125,7 @@ test('dynamic requests deduplicate call IDs, bound each turn and return recovera
     if (executions === 2) throw new Error('Search indexing not ready');
     return { success: true, contentItems: [{ type: 'inputText', text: '{}' }] };
   } };
-  const calls = [{ tool: 'reader', params: { callId: 'same' } }, { tool: 'reader', params: { callId: 'same' } }, ...Array.from({ length: 25 }, () => ({ tool: 'reader' }))];
+  const calls = [{ tool: 'reader', params: { callId: 'same' } }, { tool: 'reader', params: { callId: 'same' } }, ...Array.from({ length: 25 }, (_, index) => ({ tool: 'reader', arguments: { query: index } }))];
   const server = fakeCodexServer({ toolCalls: calls });
   const respond = createCodexResponder({ spawnImpl: server.spawnImpl, scope, readTools });
   try {
@@ -225,4 +225,48 @@ test('unexpected approval requests are rejected and fail the conversation withou
     assert.equal(server.toolResponses[0].error.code, -32601);
     assert.equal(progress.length, 0);
   } finally { await respond.close(); }
+});
+
+test('image context yields bounded inputImage items while text results retain navigation', async () => {
+  const { service } = fixture();
+  service.imageContent = async () => ({ content: [{ type: 'image', mimeType: 'image/png', data: 'YQ==' }], warnings: [] });
+  const result = await createDiscordReadTools(service, scope).call('discord_message_context', { guildId, channelId, messageId, limit: 1, includeImages: true });
+  assert.equal(result.contentItems[1].type, 'inputImage');
+  assert.equal(result.contentItems[1].imageUrl, 'data:image/png;base64,YQ==');
+  assert.ok(contents(result).navigation.older);
+});
+
+test('oversized results keep previews and conversation-local retrievable pages', async () => {
+  const { service } = fixture();
+  service.listServers = async () => ({ servers: Array.from({ length: 100 }, (_, index) => ({ id: String(index), description: 'source '.repeat(200) })), accounts: [] });
+  const tools = createDiscordReadTools(service, scope, { maxResultBytes: 4096 });
+  const first = contents(await tools.call('discord_list_servers', {}));
+  assert.ok(first.partial); assert.ok(first.resultHandle);
+  const page = contents(await tools.call('read_tool_result', { handle: first.resultHandle, length: 2000 }));
+  assert.match(page.text, /source/); assert.equal(page.nextOffset, 2000);
+  await assert.rejects(createDiscordReadTools(service, scope).call('read_tool_result', { handle: first.resultHandle }), /expired/);
+});
+
+test('topic research playbook preserves source links and performs bounded context reads', async () => {
+  const { service } = fixture();
+  const result = contents(await createDiscordReadTools(service, scope).call('discord_research_topic', { guildId, query: 'SJW', limit: 1, contextLimit: 1 }));
+  assert.equal(result.conversations.length, 1);
+  assert.equal(result.search.messages[0].url, `https://discord.com/channels/${guildId}/${channelId}/${messageId}`);
+  assert.equal(result.untrustedContent, true);
+});
+
+test('retrieval handles evict after eight results expire and keep Unicode JSON pages inside the byte budget', async () => {
+  const { service } = fixture();
+  let currentTime = 1000;
+  service.listServers = async () => ({ servers: [{ id: guildId, description: '😀漢字'.repeat(4000) }], accounts: [] });
+  const tools = createDiscordReadTools(service, scope, { maxResultBytes: 4096, now: () => currentTime });
+  const first = contents(await tools.call('discord_list_servers', {}));
+  const page = await tools.call('read_tool_result', { handle: first.resultHandle, length: 20000 });
+  assert.ok(Buffer.byteLength(page.contentItems[0].text) <= 4096);
+  assert.ok(contents(page).nextOffset);
+  assert.equal(contents(page).resultHandle, undefined, 'Reading a page must not recursively create another result handle');
+  for (let index = 0; index < 8; index += 1) await tools.call('discord_list_servers', {});
+  await assert.rejects(tools.call('read_tool_result', { handle: first.resultHandle }), /expired/);
+  const latest = contents(await tools.call('discord_list_servers', {})); currentTime += 600001;
+  await assert.rejects(tools.call('read_tool_result', { handle: latest.resultHandle }), /expired/);
 });

@@ -1,9 +1,11 @@
 import { shapeEmoji, shapeMessage, shapeSticker } from '../shapes.mjs';
 import { directMessageOwnerId } from './target.mjs';
+import { readContextImages, transcribeVoiceNotes, reportPreparation } from './context-media.mjs';
 
-export function createConversationContext(client, { bot, guild, channel, directMessages = false, gifUrls = [] }) {
+export function createConversationContext(client, { bot, guild, channel, directMessages = false, gifUrls = [] }, options = {}) {
   let expressions;
   let expressionTime = 0;
+  const transcriptCache = new Map();
 
   async function getExpressions() {
     if (directMessages) return { emojis: [], stickers: [] };
@@ -19,9 +21,35 @@ export function createConversationContext(client, { bot, guild, channel, directM
     return expressions;
   }
 
-  return async () => {
+  return async (triggerMessages = [], signal, preparation = {}) => {
+    signal?.throwIfAborted();
     const [history, expressions] = await Promise.all([client.listMessages(channel.id, { limit: 15 }), getExpressions()]);
     const messages = directMessages ? history.filter((message) => [directMessageOwnerId, bot.id].includes(message.author?.id)) : history;
+    const replyMessages = [];
+    const mediaWarnings = [];
+    for (const trigger of triggerMessages.slice(-5)) {
+      signal?.throwIfAborted();
+      const reference = trigger.message_reference || { message_id: trigger.replyTo, channel_id: trigger.channelId };
+      if (!reference.message_id || (reference.channel_id && reference.channel_id !== channel.id)) continue;
+      if (replyMessages.some((message) => message.id === reference.message_id)) continue;
+      try {
+        await reportPreparation(preparation.onProgress, { stage: 'started', toolName: 'reply_context' }, signal);
+        const parent = trigger.referenced_message || await client.getMessage(channel.id, reference.message_id);
+        if (directMessages && ![directMessageOwnerId, bot.id].includes(parent.author?.id)) { await reportPreparation(preparation.onProgress, { stage: 'completed', toolName: 'reply_context', resultCount: 0 }, signal); continue; }
+        replyMessages.push(parent);
+        await reportPreparation(preparation.onProgress, { stage: 'completed', toolName: 'reply_context', resultCount: 1 }, signal);
+      } catch (error) { signal?.throwIfAborted(); mediaWarnings.push({ messageId: reference.message_id, error: String(error.message).slice(0, 200) }); await reportPreparation(preparation.onProgress, { stage: 'failed', toolName: 'reply_context' }, signal); }
+    }
+    const relevant = [...triggerMessages, ...replyMessages];
+    const forwardedMedia = relevant.flatMap((message) => (message.message_snapshots || []).slice(0, 5).map(({ message: snapshot }) => ({
+      id: message.id, attachments: snapshot?.attachments || [], untrustedContent: true,
+    })));
+    const mediaSources = [...relevant, ...forwardedMedia];
+    const [media, voice] = await Promise.all([
+      options.media === false ? { images: [], warnings: [] } : readContextImages(client, mediaSources, options.media, signal, preparation),
+      transcribeVoiceNotes(mediaSources, options.transcribe, signal, { ...preparation, cache: transcriptCache }),
+    ]);
+    const forwardedMessages = relevant.flatMap((message) => (message.message_snapshots || []).slice(0, 5).map(({ message: snapshot }) => ({ sourceMessageId: message.id, content: String(snapshot?.content || '').slice(0, 10000), untrustedContent: true })));
     const gifs = new Set(gifUrls);
     for (const emoji of expressions.emojis) if (emoji.animated && emoji.imageUrl) gifs.add(emoji.imageUrl);
     for (const message of messages) {
@@ -44,6 +72,9 @@ export function createConversationContext(client, { bot, guild, channel, directM
       botName: bot.username, serverName: guild?.name || null, channelName: channel.name || 'Direct Messages',
       ...(directMessages ? { directMessages: true, ownerUserId: directMessageOwnerId } : {}),
       expressions, allowedGifUrls: [...gifs].slice(0, 20),
+      replyMessages: replyMessages.map((message) => ({ ...shapeMessage({ ...message, channel_id: channel.id, guild_id: guild?.id }), untrustedContent: true })),
+      forwardedMessages, images: media.images, voiceTranscripts: voice.transcripts,
+      mediaWarnings: [...mediaWarnings, ...media.warnings, ...voice.warnings],
       recentMessages: [...messages].reverse().map((message) => shapeMessage({ ...message, guild_id: guild?.id })),
     };
   };

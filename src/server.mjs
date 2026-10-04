@@ -2,11 +2,10 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod/v4';
 import { listExpressions, sendMessage, sendMessageBatch } from './messaging.mjs';
-import { getUserInfo } from './users.mjs';
 import { register, success, writeAnnotations } from './tool-results.mjs';
 import { registerProactiveTools } from './proactive/tools.mjs';
-import { searchMessages } from './search.mjs';
-import { browseMessages } from './message-browser.mjs';
+import { readToolFields, executeSharedReadTool } from './proactive/read-tool-registry.mjs';
+import { createDiscordReadTools } from './proactive/read-tools.mjs';
 import { addReaction } from './reactions.mjs';
 
 const snowflake = z.string().regex(/^\d{17,20}$/).describe('Discord snowflake ID');
@@ -16,9 +15,9 @@ const messageFields = {
   gifUrl: z.string().url().max(2048).optional().describe('An existing HTTPS GIF or GIF page URL to embed in the message'),
 };
 
-export function createDiscordMcpServer(service) {
+export function createDiscordMcpServer(service, { novaOptions = {} } = {}) {
   const server = new McpServer(
-    { name: 'discord-readonly', version: '2.8.0' },
+    { name: 'discord-readonly', version: '2.9.0' },
     {
       instructions:
         'Discord bot access. Prefer discord_read for URLs. Use ordinary messages in DMs and for standalone mentions; use discord_reply for server follow-up chains when it clarifies the target. Use discord_list_servers and discord_list_channels to resolve names, discord_user_info for profiles, discord_list_expressions for custom emojis/stickers, and discord_add_reaction for emoji reactions. Be playful and concise; use server emojis naturally and discord_send_messages for a few short conversational bubbles. Only send or react when requested or under an explicitly started proactive listener. Start proactive mode only when asked; stop it when asked.',
@@ -28,9 +27,9 @@ export function createDiscordMcpServer(service) {
   register(server, 'discord_list_servers', {
     title: 'List Discord Servers',
     description: 'List every Discord server visible to the configured bot account(s), including account health.',
-    inputSchema: { refresh: z.boolean().default(false).describe('Refresh Discord discovery instead of using the process cache') },
+    inputSchema: readToolFields('discord_list_servers', { trustedLocal: true }),
   }, async ({ refresh }) => {
-    const result = await service.listServers({ refresh });
+    const result = await executeSharedReadTool(service, 'discord_list_servers', { refresh });
     const allAccountsFailed = result.accounts.length > 0 && result.accounts.every((account) => account.error);
 
     return { ...success(result), ...(allAccountsFailed ? { isError: true } : {}) };
@@ -39,14 +38,8 @@ export function createDiscordMcpServer(service) {
   register(server, 'discord_list_channels', {
     title: 'List Discord Channels',
     description: 'List a server channel tree. Includes active threads by default and can page archived public/joined-private threads.',
-    inputSchema: {
-      guildId: snowflake,
-      includeThreads: z.boolean().default(true),
-      includeArchivedThreads: z.boolean().default(false),
-      parentChannelIds: z.array(snowflake).default([]).describe('Limit archived-thread discovery to these parent channels'),
-      maxArchivedPerParent: z.number().int().min(1).max(500).default(200),
-    },
-  }, async (args) => success(await service.listChannels(args)));
+    inputSchema: readToolFields('discord_list_channels', { trustedLocal: true }),
+  }, async (args) => success(await executeSharedReadTool(service, 'discord_list_channels', args)));
 
   register(server, 'discord_list_tickets', {
     title: 'List Discord Tickets',
@@ -87,41 +80,24 @@ export function createDiscordMcpServer(service) {
   register(server, 'discord_search_messages', {
     title: 'Search Discord Server Messages',
     description: 'Search Discord indexed messages across bot-accessible server channels. Returns up to 250 matches by paging Discord search results, with message links and continuation arguments. Default sort is newest first. Use discord_message_context to jump into a result conversation.',
-    inputSchema: {
-      guildId: snowflake, query: z.string().max(1024).default(''),
-      channelIds: z.array(snowflake).max(500).default([]), authorIds: z.array(snowflake).max(100).default([]),
-      mentionsUserIds: z.array(snowflake).max(100).default([]), repliedToMessageIds: z.array(snowflake).max(100).default([]),
-      has: z.array(z.enum(['image', 'sound', 'video', 'file', 'sticker', 'embed', 'link', 'poll', 'snapshot'])).default([]),
-      embedTypes: z.array(z.enum(['image', 'video', 'gif', 'sound', 'article'])).default([]),
-      beforeId: snowflake.optional(), afterId: snowflake.optional(), pinned: z.boolean().optional(),
-      includeNsfw: z.boolean().default(false), sortBy: z.enum(['timestamp', 'relevance']).default('timestamp'),
-      sortOrder: z.enum(['asc', 'desc']).default('desc'), limit: z.number().int().min(1).max(250).default(250),
-      offset: z.number().int().min(0).max(9975).default(0), accountId: z.string().optional(),
-    },
-  }, async (args) => success(await searchMessages(service, args)));
+    inputSchema: readToolFields('discord_search_messages', { trustedLocal: true }),
+  }, async (args) => success(await executeSharedReadTool(service, 'discord_search_messages', args)));
 
   register(server, 'discord_message_context', {
     title: 'Jump to Discord Message Context',
     description: 'Open a specific message link or message ID and read its surrounding conversation in chronological order. Returns the anchor, up to 250 messages, and arguments for browsing older or newer context. Images are opt-in.',
-    inputSchema: {
-      url: z.string().url().optional(), guildId: snowflake.optional(), channelId: snowflake.optional(), messageId: snowflake.optional(),
-      limit: z.number().int().min(1).max(250).default(50), includeImages: z.boolean().default(false),
-    },
+    inputSchema: readToolFields('discord_message_context', { trustedLocal: true }),
   }, async (args) => {
     const source = service.normalizeReadSource(args);
     if (!source.messageId) throw new Error('Provide a message URL or channelId and messageId');
-    const result = await browseMessages(service, args);
-    return success(result.structured, result.images);
+    const { toolImages, ...result } = await executeSharedReadTool(service, 'discord_message_context', args);
+    return success(result, toolImages);
   });
 
   register(server, 'discord_browse_messages', {
     title: 'Browse Discord Conversation History',
     description: 'Continue through channel history with before/after cursors, or open an around/message anchor. Reads up to 250 messages per call and returns chronological messages plus older/newer navigation arguments.',
-    inputSchema: {
-      url: z.string().url().optional(), guildId: snowflake.optional(), channelId: snowflake.optional(),
-      messageId: snowflake.optional(), before: snowflake.optional(), after: snowflake.optional(), around: snowflake.optional(),
-      limit: z.number().int().min(1).max(250).default(250), includeImages: z.boolean().default(false),
-    },
+    inputSchema: readToolFields('discord_browse_messages', { trustedLocal: true }),
   }, async (args) => {
     const result = await browseMessages(service, args);
     return success(result.structured, result.images);
@@ -200,8 +176,8 @@ export function createDiscordMcpServer(service) {
   register(server, 'discord_user_info', {
     title: 'Get Discord User Info',
     description: 'Read a public user profile, avatar and account creation date. With guildId, also return server nickname, join date and roles. Does not report live presence.',
-    inputSchema: { userId: snowflake, guildId: snowflake.optional(), accountId: z.string().optional() },
-  }, async (args) => success(await getUserInfo(service, args)));
+    inputSchema: readToolFields('discord_user_info', { trustedLocal: true }),
+  }, async (args) => success(await executeSharedReadTool(service, 'discord_user_info', args)));
 
   register(server, 'discord_add_reaction', {
     title: 'React to Discord Message',
@@ -209,6 +185,24 @@ export function createDiscordMcpServer(service) {
     annotations: { ...writeAnnotations, idempotentHint: true },
     inputSchema: { guildId: snowflake.optional(), channelId: snowflake, messageId: snowflake, emoji: z.string().min(1).max(100) },
   }, async (args) => success(await addReaction(service, args)));
+
+
+  const readTools = createDiscordReadTools(service, { trustedLocal: true, directMessages: true }, novaOptions);
+  const existingReads = new Set(['discord_list_servers', 'discord_list_channels', 'discord_search_messages', 'discord_message_context', 'discord_browse_messages', 'discord_user_info']);
+  for (const tool of readTools.registry) {
+    if (existingReads.has(tool.name)) continue;
+    register(server, tool.name, {
+      title: tool.name.replaceAll('_', ' '), description: tool.spec.description, inputSchema: tool.schema.shape,
+    }, async (args) => {
+      const result = await readTools.call(tool.name, args);
+      const text = result.contentItems.find((item) => item.type === 'inputText')?.text || '{}';
+      const images = result.contentItems.filter((item) => item.type === 'inputImage').map((item) => {
+        const match = /^data:([^;]+);base64,(.*)$/.exec(item.imageUrl);
+        return { type: 'image', mimeType: match[1], data: match[2] };
+      });
+      return success(JSON.parse(text), images);
+    });
+  }
 
   registerProactiveTools(server, service);
 
@@ -245,8 +239,8 @@ export function createDiscordMcpServer(service) {
   return server;
 }
 
-export async function runStdioServer(service) {
-  const server = createDiscordMcpServer(service);
+export async function runStdioServer(service, options) {
+  const server = createDiscordMcpServer(service, options);
   await server.connect(new StdioServerTransport());
   return server;
 }
