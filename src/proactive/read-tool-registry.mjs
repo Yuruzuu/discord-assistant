@@ -1,5 +1,6 @@
 import { z } from 'zod/v4';
 import { searchMessages, searchMessagesBatch } from '../search.mjs';
+import { readServerActivity } from '../activity.mjs';
 import { browseMessages } from '../message-browser.mjs';
 import { getUserInfo } from '../users.mjs';
 
@@ -17,6 +18,17 @@ const sharedFields = {
     channelIds: z.array(readSnowflake).max(100).default([]), authorIds: z.array(readSnowflake).max(100).default([]), beforeId: readSnowflake.optional(), afterId: readSnowflake.optional(),
     sortOrder: z.enum(['asc', 'desc']).default('desc'), limitPerSearch: z.number().int().min(1).max(100).default(25), includeNsfw: z.boolean().default(false), accountId: z.string().optional(),
   },
+  discord_read_activity: {
+    guildId: readSnowflake,
+    day: z.enum(['today', 'yesterday']).optional().describe('Calendar day in timeZone; overrides hours'),
+    hours: z.number().min(1).max(168).default(24).describe('Look back this many hours when day and since are not given'),
+    since: z.string().datetime({ offset: true }).optional(), until: z.string().datetime({ offset: true }).optional(),
+    timeZone: z.string().max(64).optional().describe('IANA time zone such as Asia/Manila; defaults to the owner/host zone'),
+    channelIds: z.array(readSnowflake).max(50).default([]).describe('Only these channels and their threads'),
+    keywords: z.array(z.string().min(1).max(100)).max(20).default([]).describe('Keep only messages containing any of these (case-insensitive)'),
+    includeThreads: z.boolean().default(true), includeArchivedThreads: z.boolean().default(true), includeBots: z.boolean().default(false),
+    maxMessages: z.number().int().min(1).max(20000).default(4000), maxCharacters: z.number().int().min(2000).max(400000).default(120000), accountId: z.string().optional(),
+  },
   discord_message_context: source,
   discord_browse_messages: { ...source, before: readSnowflake.optional(), after: readSnowflake.optional(), around: readSnowflake.optional(), limit: z.number().int().min(1).max(250).default(250) },
   discord_user_info: { guildId: readSnowflake.optional(), userId: readSnowflake, accountId: z.string().optional() },
@@ -30,6 +42,7 @@ export function readToolFields(name, { trustedLocal = false } = {}) {
   if (name === 'discord_search_messages') return { ...Object.fromEntries(workerSearchFields.map((field) => [field, fields[field]])), channelIds: z.array(readSnowflake).max(100).default([]), limit: z.number().int().min(1).max(250).default(50) };
   if (name === 'discord_browse_messages') return { ...fields, limit: source.limit };
   if (name === 'discord_search_batch') { const { accountId, includeNsfw, ...workerFields } = fields; return workerFields; }
+  if (name === 'discord_read_activity') { const { accountId, ...workerFields } = fields; return { ...workerFields, maxMessages: z.number().int().min(1).max(8000).default(4000), maxCharacters: z.number().int().min(2000).max(180000).default(120000) }; }
   if (name === 'discord_user_info') return { guildId: readSnowflake, userId: readSnowflake };
   return fields;
 }
@@ -40,6 +53,7 @@ export async function executeSharedReadTool(service, name, args, signal) {
   if (name === 'discord_list_channels') return service.listChannels(args);
   if (name === 'discord_search_messages') return searchMessages(service, args, { signal });
   if (name === 'discord_search_batch') return searchMessagesBatch(service, args, { signal });
+  if (name === 'discord_read_activity') return readServerActivity(service, args, { signal });
   if (name === 'discord_user_info') return getUserInfo(service, args);
   if (name === 'discord_find_members') {
     const { account } = await service.resolveGuild(args.guildId);

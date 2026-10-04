@@ -22,6 +22,16 @@ function batchSubject(args = {}) {
   const channels = [...(args.channelIds || []), ...searches.flatMap((search) => search?.channelIds || [])];
   return `${where(channels)} for ${queries.length ? `${plural(queries.length, 'keyword')}: ${listed(queries, quote)}` : plural(searches.length, 'search')}`;
 }
+function period(args = {}) {
+  if (args.day === 'today' || args.day === 'yesterday') return args.day;
+  if (args.since) return 'in the requested time window';
+  const hours = Number.isFinite(args.hours) ? args.hours : 24;
+  return `over the last ${hours === 1 ? 'hour' : `${hours} hours`}`;
+}
+function activitySubject(args = {}) {
+  const keywords = Array.isArray(args.keywords) ? args.keywords.filter((keyword) => typeof keyword === 'string' && keyword.trim()) : [];
+  return `${where(args.channelIds)} ${period(args)}${keywords.length ? ` that mentions ${listed(keywords, quote)}` : ''}`;
+}
 const appName = (tool) => { const app = String(tool || '').split('.')[0]; return appNames[app] || app.replace(/_/g, ' ').replace(/\b\w/g, (letter) => letter.toUpperCase()) || 'connected apps'; };
 const host = (url) => { try { return new URL(url).hostname; } catch { return 'that link'; } };
 const filename = (file) => quote(String(file || 'that file').split(/[\\/]/).at(-1));
@@ -31,6 +41,7 @@ const activities = {
   discord_list_channels: { category: 'channels', start: () => 'I’m looking through the server’s channels.', done: (_, count) => (Number.isSafeInteger(count) ? `I found ${plural(count, 'channel')} and threads to look through.` : 'I’ve looked through the server’s channels.') },
   discord_find_members: { category: 'members', start: (args) => `I’m looking up members matching ${quote(args?.query || '')}.`, done: (args, count) => `I looked up members matching ${quote(args?.query || '')}${found(count, 'match')}.` },
   discord_search_messages: { category: 'search', start: (args) => `I’m currently searching ${searchSubject(args)}.`, done: (args, count) => `I’m currently searching ${searchSubject(args)}${found(count)}.` },
+  discord_read_activity: { category: 'search', start: (args) => `I’m reading everything posted in ${activitySubject(args)}.`, done: (args, count) => `I’ve read everything posted in ${activitySubject(args)}${found(count, 'message')}.` },
   discord_search_batch: { category: 'search', start: (args) => `I’m currently searching ${batchSubject(args)}.`, done: (args, count) => `I searched ${batchSubject(args)}${found(count)}.` },
   discord_message_context: { category: 'context', start: (args) => `I’m reading the conversation around that message${snowflake.test(args?.channelId) ? ` in <#${args.channelId}>` : ''}.`, done: (_, count) => (Number.isSafeInteger(count) ? `I’ve read ${plural(count, 'message')} around it.` : 'I’ve read the surrounding conversation.') },
   discord_browse_messages: { category: 'context', start: (args) => `I’m reading more of ${snowflake.test(args?.channelId) ? `<#${args.channelId}>` : 'the conversation'}.`, done: (args, count) => `I’ve read ${Number.isSafeInteger(count) ? plural(count, 'message') : 'more messages'}${snowflake.test(args?.channelId) ? ` from <#${args.channelId}>` : ''}.` },

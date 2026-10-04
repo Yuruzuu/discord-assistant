@@ -88,6 +88,13 @@ export function createDiscordReadTools(service, scope, options = {}) {
     return result;
   });
 
+  register('discord_read_activity', 'Read everything posted in a server (or chosen channels and their threads) during a recent window: today, yesterday, the last N hours, or since/until, up to 7 days. Reads channel history directly, so it is complete and fresher than search; idle channels are skipped and recently archived threads are included. Returns compact per-channel transcripts with participants. Use keywords for recent keyword lookups. Best tool for summarizing a day.', {}, async (args, signal) => {
+    const request = { ...args, timeZone: args.timeZone || options.timeZone };
+    if (scope.trustedLocal) return executeSharedReadTool(service, 'discord_read_activity', request, signal);
+    const { account } = await guild(args.guildId);
+    return executeSharedReadTool(service, 'discord_read_activity', { ...request, accountId: account.id }, signal);
+  });
+
   register('discord_search_batch', 'Run up to 10 message searches in one call (different keywords, channels or authors), concurrently, with hits merged and deduplicated. Prefer this over many discord_search_messages calls; start with the default small limitPerSearch and only page deeper with discord_search_messages continuation for the most promising search.', {}, async (args, signal) => {
     if (scope.trustedLocal) return executeSharedReadTool(service, 'discord_search_batch', args, signal);
     const { account } = await guild(args.guildId);
@@ -183,7 +190,8 @@ export function createDiscordReadTools(service, scope, options = {}) {
     const result = await tool.execute(args, signal);
     signal?.throwIfAborted();
     const { toolImages = [], ...structured } = result;
-    const budget = resultBudget;
+    // A day of server activity is the one result worth a larger budget; its transcripts are already compacted to fit maxCharacters.
+    const budget = name === 'discord_read_activity' ? Math.max(resultBudget, 200 * 1024) : resultBudget;
     let text = JSON.stringify(structured);
     if (Buffer.byteLength(text) > budget) {
       const handle = randomUUID();
@@ -215,7 +223,7 @@ export function createDiscordReadTools(service, scope, options = {}) {
       }
     }
     return { contentItems: [{ type: 'inputText', text }, ...toolImages.slice(0, 3).filter((image) => /^image\/(png|jpeg|webp|gif)$/.test(image.mimeType) && image.data?.length <= 4 * 1024 * 1024).map((image) => ({ type: 'inputImage', imageUrl: `data:${image.mimeType};base64,${image.data}` }))], success: true,
-      resultCount: result.messages?.length ?? result.members?.length ?? result.channels?.length ?? result.servers?.length };
+      resultCount: result.messageCount ?? result.messages?.length ?? result.members?.length ?? result.channels?.length ?? result.servers?.length };
   }
 
   function errorMessage(error) {

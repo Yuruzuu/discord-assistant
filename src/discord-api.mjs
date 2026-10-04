@@ -398,7 +398,7 @@ export class DiscordApiClient {
     return this.get(`/channels/${channelId}/messages?${query}`);
   }
 
-  async listArchivedThreads(channelId, { kind = 'public', limit = 100, maxItems = 500 } = {}) {
+  async listArchivedThreads(channelId, { kind = 'public', limit = 100, maxItems = 500, archivedAfter } = {}) {
     const route =
       kind === 'joined-private'
         ? `/channels/${channelId}/users/@me/threads/archived/private`
@@ -417,6 +417,12 @@ export class DiscordApiClient {
         ? pageThreads.at(-1)?.id || null
         : pageThreads.at(-1)?.thread_metadata?.archive_timestamp || null;
       if (!before) hasMore = false;
+      // Public archives are newest-archived first, so a caller interested in a recent window can stop at the first older page.
+      if (archivedAfter !== undefined && kind !== 'joined-private' && Date.parse(pageThreads.at(-1)?.thread_metadata?.archive_timestamp) < archivedAfter) hasMore = false;
+    }
+    if (archivedAfter !== undefined && kind !== 'joined-private') {
+      const recent = threads.filter((thread) => !(Date.parse(thread.thread_metadata?.archive_timestamp) < archivedAfter));
+      return { threads: recent.slice(0, maxItems), hasMore: false };
     }
     return { threads: threads.slice(0, maxItems), hasMore };
   }

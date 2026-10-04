@@ -20,7 +20,7 @@ export function createDiscordMcpServer(service, { novaOptions = {} } = {}) {
     { name: 'discord-readonly', version: '2.9.0' },
     {
       instructions:
-        'Discord bot access. Prefer discord_read for URLs. Use ordinary messages in DMs and for standalone mentions; use discord_reply for server follow-up chains when it clarifies the target. Use discord_list_servers and discord_list_channels to resolve names, discord_user_info for profiles, discord_list_expressions for custom emojis/stickers, discord_add_reaction for emoji reactions, and discord_forward_messages to natively forward existing messages and their attachments. Be playful and concise; use server emojis naturally and discord_send_messages for a few short conversational bubbles. Only send or react when requested or under an explicitly started proactive listener. Start proactive mode only when asked; stop it when asked.',
+        'Discord bot access. Prefer discord_read for URLs. Use ordinary messages in DMs and for standalone mentions; use discord_reply for server follow-up chains when it clarifies the target. Use discord_read_activity to read or summarize everything from a recent window (today, the last hours, up to 7 days), discord_list_servers and discord_list_channels to resolve names, discord_user_info for profiles, discord_list_expressions for custom emojis/stickers, discord_add_reaction for emoji reactions, and discord_forward_messages to natively forward existing messages and their attachments. Be playful and concise; use server emojis naturally and discord_send_messages for a few short conversational bubbles. Only send or react when requested or under an explicitly started proactive listener. Start proactive mode only when asked; stop it when asked.',
     },
   );
 

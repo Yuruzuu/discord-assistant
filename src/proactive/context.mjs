@@ -1,5 +1,6 @@
 import { shapeEmoji, shapeMessage, shapeSticker } from '../shapes.mjs';
 import { directMessageOwnerId } from './target.mjs';
+import { resolveTimeZone } from '../activity.mjs';
 import { readContextImages, transcribeVoiceNotes, reportPreparation } from './context-media.mjs';
 
 export function createConversationContext(client, { bot, guild, channel, directMessages = false, gifUrls = [] }, options = {}) {
@@ -68,7 +69,7 @@ export function createConversationContext(client, { bot, guild, channel, directM
     }
 
     return {
-      channelId: channel.id, guildId: guild?.id || null,
+      channelId: channel.id, guildId: guild?.id || null, currentTime: new Date().toISOString(), currentUnix: Math.floor(Date.now() / 1000), ownerTimeZone: resolveTimeZone(options.timeZone),
       botName: bot.username, serverName: guild?.name || null, channelName: channel.name || 'Direct Messages',
       ...(directMessages ? { directMessages: true, ownerUserId: directMessageOwnerId } : {}),
       expressions, allowedGifUrls: [...gifs].slice(0, 20),
