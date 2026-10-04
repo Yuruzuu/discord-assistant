@@ -295,7 +295,14 @@ DMs and standalone server mentions use ordinary messages. In servers, native
 replies identify ongoing reply chains, batched questions and answers where
 another message has arrived after the trigger. Only the first answer bubble
 uses that reference, with reply pings disabled. Longer answers can still use
-a few playful short bubbles.
+a few short bubbles.
+
+Nova writes like a conversational assistant: plain sentences and short
+paragraphs, with headings, bold emphasis and bullet lists kept for content that
+genuinely needs them. It refers to channels as `<#channelId>` and people as
+`<@userId>` using IDs from the messages and tool results it has seen; these render
+as clickable names and never notify anyone, because Nova sends with mentions
+disabled.
 
 Nova can choose up to three emoji reactions to supplied messages in the current
 conversation, with or without a written answer. Unicode emoji are unrestricted;

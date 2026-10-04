@@ -122,7 +122,10 @@ Order: **reactions → remaining (unstreamed) bubbles → files → forwards →
   editing that message, and only when the final plan has `controls: true`.
   Progress messages always get Details and Stop answer while Nova works
   (`controls.createControlButtons`).
-- `mentions` is always off (`allowed_mentions.parse: []`).
+- `mentions` is always off (`allowed_mentions.parse: []`). Nova is prompted to
+  write `<#channelId>` and `<@userId>` (IDs taken from context or tool results);
+  these render as clickable names without notifying anyone. The persona and
+  formatting style (conversational, light markdown) live in `reply-style.mjs`.
 
 ## 8. After the turn
 
