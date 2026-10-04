@@ -3,7 +3,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { searchMessages } from '../search.mjs';
-import { assertSnowflake } from '../discord-url.mjs';
+import { assertSnowflake, compareSnowflakes } from '../discord-url.mjs';
 import { directMessageOwnerId } from './target.mjs';
 
 function owner(userId) {
@@ -115,7 +115,7 @@ export function createDigestManager({ service, accountId, root = join(homedir(),
       const result = await searchMessages(service, { accountId, guildId: schedule.guildId, query: schedule.query, authorIds: schedule.authorIds, channelIds: schedule.channelIds, limit: schedule.limit, afterId: schedule.afterId, sortBy: 'timestamp', sortOrder: 'asc' }, { signal });
       signal.throwIfAborted();
       if (result.doingHistoricalIndex) throw new Error('Discord is still indexing this search; digest delivery will wait for complete results.');
-      const messages = result.messages.filter((message) => BigInt(message.id) > BigInt(schedule.afterId)).sort((left, right) => BigInt(left.id) < BigInt(right.id) ? -1 : BigInt(left.id) > BigInt(right.id) ? 1 : 0);
+      const messages = result.messages.filter((message) => compareSnowflakes(message.id, schedule.afterId) > 0).sort((left, right) => compareSnowflakes(left.id, right.id));
       schedule.lastRunAt = now();
       if (!messages.length) { schedule.lastError = null; return { id: schedule.id, delivered: false, messageCount: 0 }; }
       const throughId = messages.at(-1).id;

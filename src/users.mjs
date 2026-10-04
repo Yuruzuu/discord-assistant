@@ -17,6 +17,7 @@ export async function getUserInfo(service, { userId, guildId, accountId }) {
     guildId ? account.client.getGuildMember(guildId, userId) : null,
     guildId ? account.client.listGuildRoles(guildId) : [],
   ]);
+  const rolesById = new Map(roles.map((role) => [role.id, role]));
 
   return {
     accountId: account.id,
@@ -35,7 +36,7 @@ export async function getUserInfo(service, { userId, guildId, accountId }) {
       joinedAt: member.joined_at || null,
       serverAvatarUrl: avatarUrl(user.id, member.avatar, guildId),
       roles: (member.roles || []).map((id) => {
-        const role = roles.find((role) => role.id === id);
+        const role = rolesById.get(id);
         return { id, name: role?.name || null, color: role?.color ?? null };
       }),
     } : null,
