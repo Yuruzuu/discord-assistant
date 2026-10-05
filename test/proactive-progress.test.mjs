@@ -146,7 +146,7 @@ test('batch searches and app calls read like an assistant, and argument text can
     'I’ve searched <#200000000000000001> and <#200000000000000002> for *4* keywords: "fate", "hero bow", "crimson moon" and *1* more and found *42* results.',
   ]);
   await progress.receive({ stage: 'started', toolName: 'apps_call_tool', arguments: { tool: 'google_drive.get_spreadsheet_cells' } });
-  assert.equal(lines.at(-1).split('\n').at(-1), 'I’m checking your Google Drive.');
+  assert.equal(lines.at(-1).split('\n').at(-1), 'I’m reading spreadsheet cells in your Google Drive.');
   await progress.receive({ stage: 'started', toolName: 'discord_search_messages', arguments: { query: '@everyone <@&123456789012345678> **bold**\nline', channelIds: ['not-a-channel'] } });
   const last = lines.at(-1).split('\n').at(-1);
   assert.equal(last, 'I’m currently searching the server for messages with "everyone &123456789012345678 bold line".');
@@ -171,16 +171,16 @@ test('the progress log edits each step from doing to done, defers throttled edit
   assert.deepEqual(sent, ['I’m checking what your connected apps can do.']);
   assert.equal(edits.length, 0, 'edits inside the throttle window are deferred');
   await wait(80);
-  assert.equal(edits.at(-1).content, 'I’ve checked your connected apps.\nI’m checking your Gmail.\nI’m checking your Google Drive.', 'the deferred edit catches up instead of being dropped');
+  assert.equal(edits.at(-1).content, 'I’ve checked your connected apps.\nI’m searching your Gmail.\nI’m searching your Google Drive.', 'the deferred edit catches up instead of being dropped');
   clock = 100;
   await progress.receive({ stage: 'completed', toolName: 'apps_call_tool', callId: 'c', arguments: { tool: 'google_drive.search' } });
-  assert.equal(edits.at(-1).content, 'I’ve checked your connected apps.\nI’m checking your Gmail.\nI’ve checked your Google Drive.', 'parallel calls of one tool are matched by call ID');
+  assert.equal(edits.at(-1).content, 'I’ve checked your connected apps.\nI’m searching your Gmail.\nI’ve searched your Google Drive.', 'parallel calls of one tool are matched by call ID');
   clock = 200;
   await progress.receive({ stage: 'completed', toolName: 'apps_call_tool', callId: 'b', arguments: { tool: 'gmail.search_emails' } });
   await progress.receive({ stage: 'started', toolName: 'discord_search_messages', callId: 'd', arguments: { query: 'fate', channelIds: ['200000000000000001'] } });
   await progress.receive({ stage: 'failed', toolName: 'discord_search_messages', callId: 'd', arguments: { query: 'fate', channelIds: ['200000000000000001'] } });
   await progress.finish();
-  assert.deepEqual(edits.at(-1), { content: 'I checked your connected apps, your Gmail and your Google Drive. One lookup didn’t work.', options: { components: [] } });
+  assert.deepEqual(edits.at(-1), { content: 'I checked your connected apps, and searched your Gmail and your Google Drive. One lookup didn’t work.', options: { components: [] } });
 });
 
 test('null or malformed tool arguments never break the progress log', async () => {
@@ -193,4 +193,31 @@ test('null or malformed tool arguments never break the progress log', async () =
   assert.equal(lines.at(-1).split('\n').length, 5, 'every step still renders');
   assert.match(lines.at(-1), /^I’ve searched the server for messages and found \*2\* results\./);
   progress.close();
+});
+
+test('connected-app steps say what is being searched or read, without exposing IDs', async () => {
+  const lines = [];
+  const progress = createProgressReporter({ intervalMs: 0, send: async (content) => { lines.push(content); return { sentMessages: [{ message: { id: 'message' } }] }; }, edit: async (_, content) => { lines.push(content); } });
+  const calls = [
+    ['google_drive.search', { query: 'Q3 budget' }],
+    ['google_drive.get_spreadsheet_cells', { spreadsheet_id: '1AbCdEfGhIjKlMnOpQrStUvWxYz012345', range: 'Sheet1!A1:F40' }],
+    ['google_drive.get_document_text', { file_id: '1AbCdEfGhIjKlMnOpQrStUvWxYz012345' }],
+    ['gmail.read_email_thread', { thread_id: '18c2f0a9b7d6e5f4' }],
+    ['github.fetch_pr_patch', { title: 'Fix fate scaling' }],
+  ];
+  for (const [index, [tool, input]] of calls.entries()) {
+    await progress.receive({ stage: 'started', toolName: 'apps_call_tool', callId: String(index), arguments: { tool, arguments: input } });
+    if (index === 0) assert.equal(lines.at(-1), 'I’m searching your Google Drive for "Q3 budget".');
+    await progress.receive({ stage: 'completed', toolName: 'apps_call_tool', callId: String(index), arguments: { tool, arguments: input } });
+  }
+  assert.equal(lines.at(-1), [
+    'I’ve searched your Google Drive for "Q3 budget".',
+    'I’ve read spreadsheet cells (Sheet1!A1:F40) in your Google Drive.',
+    'I’ve read a document in your Google Drive.',
+    'I’ve read an email thread in your Gmail.',
+    'I’ve read a PR patch "Fix fate scaling" in your GitHub.',
+  ].join('\n'));
+  assert.ok(!lines.join('\n').includes('1AbCdEfGh'), 'file IDs never appear');
+  await progress.finish();
+  assert.match(lines.at(-1), /^I searched your Google Drive for "Q3 budget", and read spreadsheet cells/);
 });

@@ -38,6 +38,27 @@ function activitySubject(args = {}) {
 }
 const appName = (tool) => { const app = String(tool || '').split('.')[0]; return appNames[app] || app.replace(/_/g, ' ').replace(/\b\w/g, (letter) => letter.toUpperCase()) || 'connected apps'; };
 const yourApps = (args) => (args?.app ? `your ${appName(args.app)}` : 'your connected apps');
+// App tool names read as verb + object (google_drive.get_spreadsheet_cells -> "reading spreadsheet cells"); only human-readable arguments
+// (queries, names, titles, ranges) are shown, never file or message IDs.
+const appVerbs = [[/^(search|find)$/, 'searching', 'searched'], [/^(get|read|fetch|retrieve|download|export)$/, 'reading', 'read'], [/^list$/, 'listing', 'listed']];
+function appAction(args = {}) {
+  const [app, action = ''] = String(args.tool || '').split('.');
+  const words = action.toLowerCase().split('_').filter((word, index, all) => word && word !== 'batch' && !(index === all.length - 1 && index > 1 && ['text', 'content'].includes(word)))
+    .map((word) => ({ pr: 'PR', prs: 'PRs', pdf: 'PDF', url: 'URL', id: 'ID' })[word] || word);
+  const verb = appVerbs.find(([pattern]) => pattern.test(words[0] || ''));
+  const object = (verb ? words.slice(1) : words).join(' ');
+  const input = args.arguments && typeof args.arguments === 'object' && !Array.isArray(args.arguments) ? args.arguments : {};
+  const pick = (...keys) => keys.map((key) => input[key]).find((value) => typeof value === 'string' && value.trim() && !/^[A-Za-z0-9_-]{20,}$/.test(value.trim()));
+  const query = pick('query', 'q', 'search_query', 'search', 'keywords');
+  const name = pick('name', 'title', 'file_name', 'filename', 'subject');
+  const range = pick('range', 'a1_range', 'sheet_range');
+  const where = `your ${appName(app)}`;
+  const thing = object ? `${/s$/.test(object) ? '' : /^[aeiou]/.test(object) ? 'an ' : 'a '}${object}` : 'items';
+  const detail = `${name ? ` ${quote(name)}` : ''}${range ? ` (${quote(range).slice(1, -1)})` : ''}`;
+  if (verb?.[1] === 'searching' || (!verb && query)) return { ing: 'searching', past: 'searched', phrase: `${where}${object && object !== 'emails' && object !== 'files' ? ` ${object}` : ''}${query ? ` for ${quote(query)}` : ''}` };
+  if (!verb) return { ing: 'checking', past: 'checked', phrase: `${where}${object ? ` (${object})` : ''}` };
+  return { ing: verb[1], past: verb[2], phrase: `${thing}${detail} in ${where}${query ? ` matching ${quote(query)}` : ''}` };
+}
 const host = (url) => { try { return new URL(url).hostname; } catch { return 'that link'; } };
 const filename = (file) => quote(String(file || 'that file').split(/[\\/]/).at(-1));
 
@@ -57,7 +78,7 @@ const activities = {
   reply_context: { category: 'reply context', start: () => 'I’m loading the message you replied to.', done: () => 'I’ve loaded the message you replied to.', summary: () => ['loaded', 'the message you replied to'] },
   web_read_link: { category: 'linked page', start: (args) => `I’m reading ${host(args?.url)}.`, done: (args) => `I’ve read ${host(args?.url)}.`, summary: (args) => ['read', host(args?.url)] },
   apps_list_tools: { category: 'connected apps', start: (args) => `I’m checking what ${yourApps(args)} can do.`, done: (args) => `I’ve checked ${yourApps(args)}.`, summary: (args) => ['checked', yourApps(args)] },
-  apps_call_tool: { category: 'connected app', start: (args) => `I’m checking your ${appName(args?.tool)}.`, done: (args) => `I’ve checked your ${appName(args?.tool)}.`, summary: (args) => ['checked', `your ${appName(args?.tool)}`] },
+  apps_call_tool: { category: 'connected app', start: (args) => { const action = appAction(args); return `I’m ${action.ing} ${action.phrase}.`; }, done: (args) => { const action = appAction(args); return `I’ve ${action.past} ${action.phrase}.`; }, summary: (args) => { const action = appAction(args); return [action.past, action.phrase]; } },
   project_list: { category: 'projects', start: () => 'I’m checking your approved projects.', done: () => 'I’ve checked your approved projects.', summary: () => ['checked', 'your approved projects'] },
   project_search: { category: 'project search', start: (args) => `I’m searching your project files for ${asked(args)}.`, done: (args, count) => `I’ve searched your project files for ${asked(args)}${found(count, 'match')}.`, summary: (args) => ['searched', `your project files for ${asked(args)}`] },
   project_read_file: { category: 'project file', start: (args) => `I’m reading ${filename(args?.file)} from your project.`, done: (args) => `I’ve read ${filename(args?.file)}.`, summary: (args) => ['read', filename(args?.file)] },
