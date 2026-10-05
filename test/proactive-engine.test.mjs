@@ -304,3 +304,40 @@ test('failed activity delivery leaves the generated final answer intact', async 
     assert.equal(engine.status().sentMessages, 1);
   } finally { engine.stop(); }
 });
+
+test('a full reply plan delivers in order and counts each confirmed message once', async () => {
+  const events = [];
+  const replies = [];
+  const record = (event, sentMessages) => { events.push(event); return { sentMessages }; };
+  const sendReplies = async (messages, trigger, signal, options) => { replies.push(['bubbles', options.replyToMessageId]); return record(`bubbles:${messages.length}`, messages); };
+  sendReplies.react = async (reaction) => { events.push(`react:${reaction.emoji}`); };
+  sendReplies.files = async (files, trigger, signal, options) => { replies.push(['files', options.replyToMessageId]); return record(`files:${files.length}`, [{}]); };
+  sendReplies.images = async (handles) => record(`images:${handles.length}`, [{}]);
+  sendReplies.channelMessages = async (items) => record(`posts:${items.length}`, items.map((item, index) => ({ message: { channelId: item.channelId, url: `https://discord.com/channels/1/2/${index}` } })));
+  sendReplies.confirmation = async (content) => record(`confirmation:${content.split('\n').length}`, [content]);
+  sendReplies.forwards = async (forwards) => record(`forwards:${forwards.length}`, forwards);
+  sendReplies.controls = async () => { events.push('controls'); return true; };
+  const reference = { message_reference: { message_id: '600000000000000001' }, mentions: [{ id: botUserId }] };
+  const full = { shouldReply: true, messages: [{ content: 'one' }, { content: 'two' }], reactions: [{ messageId: '400000000000000001', emoji: '👍' }], files: [{ name: 'notes.md', content: 'notes' }], images: ['img1'],
+    channelMessages: [{ channelId, content: 'hi', notify: false }, { channelId, content: 'again', notify: false }], forwards: [{ channelId, messageId: '400000000000000002' }], controls: true };
+  const { engine } = fixture({ sendReplies, generateReply: async () => full });
+  try {
+    const incoming = message(reference);
+    await engine.receive(incoming);
+    await until(() => engine.status().replyBatches === 1);
+    assert.deepEqual(events, ['react:👍', 'bubbles:2', 'files:1', 'images:1', 'posts:2', 'confirmation:2', 'forwards:1', 'controls']);
+    assert.deepEqual(replies, [['bubbles', incoming.id], ['files', undefined]], 'files reply natively only when no bubble went out');
+    const { sentMessages, streamedMessages, reactions, channelMessages, forwards, errors } = engine.status();
+    assert.deepEqual({ sentMessages, streamedMessages, reactions, channelMessages, forwards, errors }, { sentMessages: 6, streamedMessages: 0, reactions: 1, channelMessages: 2, forwards: 1, errors: 0 });
+  } finally { engine.stop(); }
+
+  replies.length = 0;
+  const filesOnly = fixture({ sendReplies, generateReply: async () => ({ shouldReply: true, messages: [], files: full.files }) });
+  try {
+    const incoming = message(reference);
+    await filesOnly.engine.receive(incoming);
+    await until(() => filesOnly.engine.status().replyBatches === 1);
+    assert.deepEqual(replies, [['files', incoming.id]]);
+    assert.equal(filesOnly.engine.status().sentMessages, 1);
+  } finally { filesOnly.engine.stop(); }
+});

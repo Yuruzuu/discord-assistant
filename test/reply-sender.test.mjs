@@ -112,3 +112,47 @@ test('component failures preserve confirmed receipts and cancellation skips opti
   assert.equal(await sender.controls({ id: '300000000000000003' }, cancellation.signal), false);
   assert.equal(edits, 2);
 });
+
+test('batch failures keep partial receipts and the failing position, and uploads classify their outcome for the journal', async () => {
+  const channelId = '200000000000000001';
+  const journal = [];
+  const deliveryJournal = { lookup: async () => null, begin: async () => {}, record: async (id) => { journal.push(['sent', id]); }, unknown: async (id) => { journal.push(['unknown', id]); }, resolve: async (id, outcome) => { journal.push(['resolved', id, outcome.delivered]); } };
+  let failNonce = null;
+  let uploadStatus;
+  const failure = (status) => Object.assign(new Error('Upload failed'), status ? { status } : {});
+  const client = {
+    sendMessage: async (_, payload) => { if (failNonce && payload.nonce.endsWith(failNonce)) throw Object.assign(new Error('Missing Permissions'), { status: 403 }); return { id: '400000000000000001', content: payload.content }; },
+    sendMessageFiles: async () => { throw failure(uploadStatus); },
+    sendMessageImages: async () => { throw failure(uploadStatus); },
+  };
+  const target = { channel: { id: channelId, guild_id: '100000000000000001' }, account: { id: 'reader', client } };
+  const image = { mimeType: 'image/png', data: 'iVBORw0KGgo=', name: 'app-img1.png' };
+  const send = createReplySender({ resolveChannel: async () => target }, { channelId, listenerId: 'fixture', deliveryJournal, sendTarget: async () => target, sharedImage: () => image,
+    forwardSource: async () => { throw new Error('Server conversations can only read their own server.'); } });
+  const trigger = { id: '300000000000000001' };
+  const { batchId } = await send([], trigger);
+
+  failNonce = ':2c1';
+  await assert.rejects(send([{ content: 'short' }, { content: 'long '.repeat(600) }], trigger, undefined, { offset: 1 }), (error) => {
+    assert.deepEqual([error.batchId, error.sentMessages.length, error.failedMessageIndex, error.sendStatus], [batchId, 2, 2, 'rejected']);
+    return true;
+  });
+  failNonce = ':x1';
+  await assert.rejects(send.channelMessages([{ channelId, content: 'first', notify: false }, { channelId, content: 'second', notify: false }], trigger), (error) => {
+    assert.deepEqual([error.batchId, error.sentMessages.length, error.failedMessageIndex], [batchId, 1, 1]);
+    return true;
+  });
+  await assert.rejects(send.forwards([{ channelId, messageId: '300000000000000002' }], trigger), (error) => {
+    assert.deepEqual([error.batchId, error.sentMessages, error.failedMessageIndex], [batchId, [], 0]);
+    return true;
+  });
+
+  for (const [status, sendStatus] of [[403, 'rejected'], [503, 'unknown'], [undefined, 'unknown']]) {
+    uploadStatus = status;
+    journal.length = 0;
+    const files = await send.files([{ name: 'notes.md', content: 'notes' }], trigger).catch((error) => error);
+    const images = await send.images(['img1'], trigger).catch((error) => error);
+    assert.deepEqual([files.sendStatus, images.sendStatus], [sendStatus, sendStatus]);
+    assert.deepEqual(journal, sendStatus === 'rejected' ? [['resolved', `${batchId}:files`, false], ['resolved', `${batchId}:images`, false]] : [['unknown', `${batchId}:files`], ['unknown', `${batchId}:images`]]);
+  }
+});
