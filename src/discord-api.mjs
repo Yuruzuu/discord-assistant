@@ -4,6 +4,9 @@ import { setTimeout as wait } from 'node:timers/promises';
 const API_BASE = 'https://discord.com/api/v10';
 const USER_AGENT = 'discord-readonly-mcp/2.0 (+https://github.com/Vorakorn1001/discord-readonly-mcp)';
 const IMAGE_MIME_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif']);
+const SAFE_FILENAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/;
+// Only idempotent methods are retried after a server or connection failure; a POST may already have been applied.
+const IDEMPOTENT_METHODS = new Set(['GET', 'PUT', 'PATCH', 'DELETE']);
 const RETRYABLE_CONNECTION_CODES = new Set([
   'FETCH_FAILED', 'EAI_AGAIN', 'ENOTFOUND', 'ECONNRESET', 'ECONNREFUSED',
   'ETIMEDOUT', 'EHOSTUNREACH', 'ENETUNREACH', 'EPIPE',
@@ -177,6 +180,7 @@ export class DiscordApiClient {
   }
 
   async requestJson(path, route, major, method, payload, { signal } = {}) {
+    const idempotent = IDEMPOTENT_METHODS.has(method);
     for (let attempt = 0; attempt <= this.maxRetries; attempt += 1) {
       await this.waitForRateLimit(route);
       signal?.throwIfAborted();
@@ -203,7 +207,7 @@ export class DiscordApiClient {
       } catch (error) {
         const code = connectionErrorCode(error);
         if (!code) throw error;
-        if (['GET', 'PUT', 'PATCH', 'DELETE'].includes(method) && attempt < this.maxRetries && RETRYABLE_CONNECTION_CODES.has(code)) {
+        if (idempotent && attempt < this.maxRetries && RETRYABLE_CONNECTION_CODES.has(code)) {
           await this.sleep(250 * 2 ** attempt);
           continue;
         }
@@ -221,7 +225,7 @@ export class DiscordApiClient {
 
       if (response.ok) return body;
       if (response.status === 429 && attempt < this.maxRetries && retryable) continue;
-      if (['GET', 'PUT', 'PATCH', 'DELETE'].includes(method) && response.status >= 500 && attempt < this.maxRetries) {
+      if (idempotent && response.status >= 500 && attempt < this.maxRetries) {
         await this.sleep(250 * 2 ** attempt);
         continue;
       }
@@ -344,42 +348,40 @@ export class DiscordApiClient {
     return this.scheduleRequest('DELETE', `/channels/${channelId}/messages/${messageId}/reactions/${encodeURIComponent(emoji)}/@me`, undefined, options);
   }
 
-  sendMessageFiles(channelId, payload, files, options) {
-    if (!Array.isArray(files) || files.length < 1 || files.length > 3) throw new Error('Provide one to three generated text files');
+  // toBlob validates each upload and throws synchronously, so an invalid upload never starts a request.
+  sendMessageForm(channelId, payload, uploads, toBlob, options) {
     const form = new FormData();
     form.append('payload_json', JSON.stringify(payload));
+    for (const [index, upload] of uploads.entries()) form.append(`files[${index}]`, toBlob(upload), upload.name);
+    return this.post(`/channels/${channelId}/messages`, form, options);
+  }
+
+  sendMessageFiles(channelId, payload, files, options) {
+    if (!Array.isArray(files) || files.length < 1 || files.length > 3) throw new Error('Provide one to three generated text files');
     let total = 0;
-    for (const [index, file] of files.entries()) {
-      if (typeof file.name !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/.test(file.name) || typeof file.content !== 'string') throw new Error('Generated files require a safe filename and text content');
+    return this.sendMessageForm(channelId, payload, files, (file) => {
+      if (typeof file.name !== 'string' || !SAFE_FILENAME.test(file.name) || typeof file.content !== 'string') throw new Error('Generated files require a safe filename and text content');
       const size = Buffer.byteLength(file.content);
       total += size;
       if (size > 128 * 1024 || total > 256 * 1024) throw new Error('Generated file byte limit exceeded');
-      form.append(`files[${index}]`, new Blob([file.content], { type: 'text/plain;charset=utf-8' }), file.name);
-    }
-    return this.post(`/channels/${channelId}/messages`, form, options);
+      return new Blob([file.content], { type: 'text/plain;charset=utf-8' });
+    }, options);
   }
 
   sendMessageImages(channelId, payload, images, options) {
     if (!Array.isArray(images) || images.length < 1 || images.length > 4) throw new Error('Provide one to four images');
-    const form = new FormData();
-    form.append('payload_json', JSON.stringify(payload));
     let total = 0;
-    for (const [index, image] of images.entries()) {
-      if (typeof image.name !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/.test(image.name) || !/^image\/(png|jpeg|webp|gif)$/.test(image.mimeType) || typeof image.data !== 'string') throw new Error('Images require a safe filename, a supported image type and base64 data');
+    return this.sendMessageForm(channelId, payload, images, (image) => {
+      if (typeof image.name !== 'string' || !SAFE_FILENAME.test(image.name) || !/^image\/(png|jpeg|webp|gif)$/.test(image.mimeType) || typeof image.data !== 'string') throw new Error('Images require a safe filename, a supported image type and base64 data');
       const bytes = Buffer.from(image.data, 'base64');
       total += bytes.length;
       if (!bytes.length || bytes.length > 8 * 1024 * 1024 || total > 20 * 1024 * 1024) throw new Error('Image byte limit exceeded');
-      form.append(`files[${index}]`, new Blob([bytes], { type: image.mimeType }), image.name);
-    }
-    return this.post(`/channels/${channelId}/messages`, form, options);
+      return new Blob([bytes], { type: image.mimeType });
+    }, options);
   }
 
   createThread(channelId, payload, options) {
     return this.post(`/channels/${channelId}/threads`, payload, options);
-  }
-
-  registerCommands(applicationId, commands) {
-    return this.scheduleRequest('PUT', `/applications/${applicationId}/commands`, commands);
   }
 
   registerCommand(applicationId, command) {
@@ -399,10 +401,10 @@ export class DiscordApiClient {
   }
 
   async listArchivedThreads(channelId, { kind = 'public', limit = 100, maxItems = 500, archivedAfter } = {}) {
-    const route =
-      kind === 'joined-private'
-        ? `/channels/${channelId}/users/@me/threads/archived/private`
-        : `/channels/${channelId}/threads/archived/${kind}`;
+    const joined = kind === 'joined-private';
+    const route = joined ? `/channels/${channelId}/users/@me/threads/archived/private` : `/channels/${channelId}/threads/archived/${kind}`;
+    // Public archives are newest-archived first, so a caller interested in a recent window can stop at the first older page.
+    const recentOnly = archivedAfter !== undefined && !joined;
     const threads = [];
     let before;
     let hasMore = true;
@@ -412,18 +414,11 @@ export class DiscordApiClient {
       const page = await this.get(`${route}?${query}`);
       const pageThreads = Array.isArray(page?.threads) ? page.threads : [];
       threads.push(...pageThreads);
-      hasMore = Boolean(page?.has_more) && pageThreads.length > 0;
-      before = kind === 'joined-private'
-        ? pageThreads.at(-1)?.id || null
-        : pageThreads.at(-1)?.thread_metadata?.archive_timestamp || null;
-      if (!before) hasMore = false;
-      // Public archives are newest-archived first, so a caller interested in a recent window can stop at the first older page.
-      if (archivedAfter !== undefined && kind !== 'joined-private' && Date.parse(pageThreads.at(-1)?.thread_metadata?.archive_timestamp) < archivedAfter) hasMore = false;
+      const last = pageThreads.at(-1);
+      before = (joined ? last?.id : last?.thread_metadata?.archive_timestamp) || null;
+      hasMore = Boolean(page?.has_more && before) && !(recentOnly && Date.parse(before) < archivedAfter);
     }
-    if (archivedAfter !== undefined && kind !== 'joined-private') {
-      const recent = threads.filter((thread) => !(Date.parse(thread.thread_metadata?.archive_timestamp) < archivedAfter));
-      return { threads: recent.slice(0, maxItems), hasMore: false };
-    }
+    if (recentOnly) return { threads: threads.filter((thread) => !(Date.parse(thread.thread_metadata?.archive_timestamp) < archivedAfter)).slice(0, maxItems), hasMore: false };
     return { threads: threads.slice(0, maxItems), hasMore };
   }
 
@@ -508,5 +503,3 @@ export class DiscordApiClient {
     throw new Error('Unable to fetch Discord attachment');
   }
 }
-
-export const discordMedia = { isAllowedMediaHost, imageMimeTypes: IMAGE_MIME_TYPES, detectImageMime };
