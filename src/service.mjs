@@ -1,6 +1,6 @@
 import { DiscordApiClient, DiscordApiError } from './discord-api.mjs';
 import { assertSnowflake, parseDiscordUrl, snowflakeTimestamp, validateCursors } from './discord-url.mjs';
-import { CHANNEL_TYPES, imageReferences, shapeChannel, shapeMessage } from './shapes.mjs';
+import { imageReferences, shapeChannel, shapeMessage } from './shapes.mjs';
 import { mapConcurrent } from './concurrency.mjs';
 
 const THREAD_TYPES = new Set([10, 11, 12]);
@@ -78,13 +78,9 @@ export class DiscordService {
       }),
     );
 
-    this.guildAccounts.clear();
     const servers = new Map();
     for (const result of results) {
       for (const guild of result.guilds) {
-        const accounts = this.guildAccounts.get(guild.id) || [];
-        accounts.push(result.accountId);
-        this.guildAccounts.set(guild.id, accounts);
         const existing = servers.get(guild.id) || {
           id: guild.id,
           name: guild.name,
@@ -95,11 +91,11 @@ export class DiscordService {
         servers.set(guild.id, existing);
       }
     }
+    this.guildAccounts = new Map([...servers.values()].map((server) => [server.id, [...server.accounts]]));
 
     const expectedMissing = [];
-    for (const account of this.accounts) {
-      const result = results.find((item) => item.accountId === account.id);
-      const found = new Set(result?.guilds.map((guild) => guild.id) || []);
+    for (const [index, account] of this.accounts.entries()) {
+      const found = new Set(results[index].guilds.map((guild) => guild.id));
       for (const guildId of account.expectedGuildIds || []) {
         if (!found.has(guildId)) expectedMissing.push({ accountId: account.id, guildId });
       }
@@ -188,10 +184,6 @@ export class DiscordService {
     const error = new Error(`No configured Discord bot can access channel ${channelId}`);
     error.failures = failures;
     throw error;
-  }
-
-  async accountForChannel(channelId, guildId = null) {
-    return (await this.resolveChannel(channelId, guildId)).account;
   }
 
   listServers(options) {
@@ -501,5 +493,3 @@ export class DiscordService {
     };
   }
 }
-
-export const discordTypes = { channelTypes: CHANNEL_TYPES, threadTypes: THREAD_TYPES };

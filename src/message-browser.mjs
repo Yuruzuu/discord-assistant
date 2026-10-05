@@ -79,19 +79,19 @@ export async function browseMessages(service, {
     const start = Math.max(0, Math.min(position - Math.floor(limit / 2), ordered.length - limit));
     messages = ordered.slice(start, start + limit);
   }
+  const resolvedGuildId = channel.guild_id || source.guildId;
   const enriched = [...new Map(messages.map((message) => [message.id, message])).values()].sort(compareMessages).map((message) => ({
-    ...message, channel_id: message.channel_id || source.channelId, guild_id: message.guild_id || channel.guild_id || source.guildId,
+    ...message, channel_id: message.channel_id || source.channelId, guild_id: message.guild_id || resolvedGuildId,
   }));
   const oldest = enriched[0]?.id || null;
   const newest = enriched.at(-1)?.id || null;
   const images = includeImages ? await service.imageContent(account, enriched) : { content: [], warnings: [] };
-  const resolvedGuildId = channel.guild_id || source.guildId;
   const navigationTarget = { ...(resolvedGuildId ? { guildId: resolvedGuildId } : {}), channelId: source.channelId, limit };
 
   return {
     structured: {
-      accountId: account.id, guildId: channel.guild_id || source.guildId, channel: shapeChannel(channel),
-      anchor: anchor ? shapeMessage({ ...anchor, channel_id: source.channelId, guild_id: channel.guild_id || source.guildId }) : null,
+      accountId: account.id, guildId: resolvedGuildId, channel: shapeChannel(channel),
+      anchor: anchor ? shapeMessage({ ...anchor, channel_id: source.channelId, guild_id: resolvedGuildId }) : null,
       messages: enriched.map(shapeMessage), cursors: { oldest, newest }, imageWarnings: images.warnings,
       navigation: {
         older: oldest ? { ...navigationTarget, before: oldest } : null,

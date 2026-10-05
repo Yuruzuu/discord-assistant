@@ -54,11 +54,15 @@ export async function sendMessage(service, { guildId, channelId, content, sticke
   return sendResolvedMessage(resolution, { guildId, channelId, content, stickerIds, gifUrl, replyToMessageId, mentionRepliedUser, allowMentions, nonce }, signal);
 }
 
-async function postMessage(account, channelId, payload, signal) {
+// Every send carries a nonce with enforce_nonce so Discord drops duplicates; a failure without a 4xx answer has an unknown outcome.
+async function postMessage({ account, channel }, { guildId, channelId, nonce }, payload, signal) {
+  signal?.throwIfAborted();
+  const messageNonce = nonce ?? randomBytes(12).toString('hex');
+  let message;
   try {
-    return await account.client.sendMessage(channelId, payload, { signal });
+    message = await account.client.sendMessage(channelId, { ...payload, nonce: messageNonce, enforce_nonce: true }, { signal });
   } catch (error) {
-    error.nonce = payload.nonce;
+    error.nonce = messageNonce;
     error.sendStatus = error.status && error.status < 500 ? 'rejected' : 'unknown';
     if (error.sendStatus === 'unknown') {
       error.message += ' The send outcome is unknown; reuse the provided nonce if retrying.';
@@ -66,24 +70,6 @@ async function postMessage(account, channelId, payload, signal) {
 
     throw error;
   }
-}
-
-export async function sendResolvedMessage({ account, channel }, { guildId, channelId, content, stickerIds = [], gifUrl, replyToMessageId, mentionRepliedUser = false, allowMentions = false, mentionUserIds = [], nonce }, signal) {
-  const messageContent = validateMessage({ content, stickerIds, gifUrl, replyToMessageId, mentionRepliedUser, nonce });
-  signal?.throwIfAborted();
-  const messageNonce = nonce ?? randomBytes(12).toString('hex');
-  const message = await postMessage(account, channelId, {
-    ...(messageContent === undefined ? {} : { content: messageContent }),
-    ...(stickerIds.length ? { sticker_ids: stickerIds } : {}),
-    ...(replyToMessageId ? { message_reference: { message_id: replyToMessageId, channel_id: channelId, fail_if_not_exists: true } } : {}),
-    allowed_mentions: {
-      parse: allowMentions ? ['users', 'roles', 'everyone'] : [],
-      ...(!allowMentions && mentionUserIds.length ? { users: mentionUserIds.slice(0, 10) } : {}),
-      ...(replyToMessageId ? { replied_user: mentionRepliedUser } : {}),
-    },
-    nonce: messageNonce,
-    enforce_nonce: true,
-  }, signal);
 
   return {
     accountId: account.id,
@@ -92,32 +78,42 @@ export async function sendResolvedMessage({ account, channel }, { guildId, chann
   };
 }
 
-export async function sendMessageBatch(service, { guildId, channelId, messages, replyToMessageId, mentionRepliedUser = false, allowMentions = false, intervalMs = 650, batchId }, { sleep = wait, signal } = {}) {
+export async function sendResolvedMessage(resolution, { guildId, channelId, content, stickerIds = [], gifUrl, replyToMessageId, mentionRepliedUser = false, allowMentions = false, mentionUserIds = [], nonce }, signal) {
+  const messageContent = validateMessage({ content, stickerIds, gifUrl, replyToMessageId, mentionRepliedUser, nonce });
+  return postMessage(resolution, { guildId, channelId, nonce }, {
+    ...(messageContent === undefined ? {} : { content: messageContent }),
+    ...(stickerIds.length ? { sticker_ids: stickerIds } : {}),
+    ...(replyToMessageId ? { message_reference: { message_id: replyToMessageId, channel_id: channelId, fail_if_not_exists: true } } : {}),
+    allowed_mentions: {
+      parse: allowMentions ? ['users', 'roles', 'everyone'] : [],
+      ...(!allowMentions && mentionUserIds.length ? { users: mentionUserIds.slice(0, 10) } : {}),
+      ...(replyToMessageId ? { replied_user: mentionRepliedUser } : {}),
+    },
+  }, signal);
+}
+
+function validateBatch({ guildId, channelId, replyToMessageId, messages, intervalMs, batchId }, maximum, countError) {
   assertSnowflake(channelId, 'channelId');
   if (guildId) assertSnowflake(guildId, 'guildId');
   if (replyToMessageId) assertSnowflake(replyToMessageId, 'replyToMessageId');
-  if (!Array.isArray(messages) || messages.length < 1 || messages.length > 5) throw new Error('Provide 1 to 5 messages in a batch');
+  if (!Array.isArray(messages) || messages.length < 1 || messages.length > maximum) throw new Error(countError);
   if (!Number.isSafeInteger(intervalMs) || intervalMs < 0 || intervalMs > 5000) throw new Error('intervalMs must be an integer from 0 to 5000');
   if (batchId !== undefined && !/^[A-Za-z0-9_-]{1,20}$/.test(batchId)) throw new Error('batchId must contain 1 to 20 letters, digits, underscores, or hyphens');
-  for (const message of messages) validateMessage(message);
+}
 
+// Sends stop at the first failure, which carries the batch ID, the receipts already sent and the failing index so callers never resend those.
+async function sendInOrder(service, { guildId, channelId, intervalMs, batchId }, items, send, { sleep, signal }) {
   const identifier = batchId || randomBytes(10).toString('hex');
   const sentMessages = [];
   let failedMessageIndex = 0;
   try {
     signal?.throwIfAborted();
     const resolution = await service.resolveChannel(channelId, guildId);
-    for (const [index, message] of messages.entries()) {
+    for (const [index, item] of items.entries()) {
       failedMessageIndex = index;
       signal?.throwIfAborted();
       if (index > 0 && intervalMs > 0) await sleep(intervalMs, undefined, signal ? { signal } : undefined);
-      const sent = await sendResolvedMessage(resolution, {
-        ...message, guildId, channelId, allowMentions,
-        replyToMessageId: index === 0 ? replyToMessageId : undefined,
-        mentionRepliedUser: index === 0 ? mentionRepliedUser : false,
-        nonce: `${identifier}:${index}`,
-      }, signal);
-      sentMessages.push(sent);
+      sentMessages.push(await send(resolution, item, index, identifier));
     }
   } catch (error) {
     error.batchId = identifier;
@@ -127,6 +123,18 @@ export async function sendMessageBatch(service, { guildId, channelId, messages, 
   }
 
   return { batchId: identifier, sentMessages };
+}
+
+export async function sendMessageBatch(service, { guildId, channelId, messages, replyToMessageId, mentionRepliedUser = false, allowMentions = false, intervalMs = 650, batchId }, { sleep = wait, signal } = {}) {
+  validateBatch({ guildId, channelId, replyToMessageId, messages, intervalMs, batchId }, 5, 'Provide 1 to 5 messages in a batch');
+  for (const message of messages) validateMessage(message);
+
+  return sendInOrder(service, { guildId, channelId, intervalMs, batchId }, messages, (resolution, message, index, identifier) => sendResolvedMessage(resolution, {
+    ...message, guildId, channelId, allowMentions,
+    replyToMessageId: index === 0 ? replyToMessageId : undefined,
+    mentionRepliedUser: index === 0 ? mentionRepliedUser : false,
+    nonce: `${identifier}:${index}`,
+  }, signal), { sleep, signal });
 }
 
 function validateForwardSource(source) {
@@ -137,33 +145,20 @@ function validateForwardSource(source) {
 }
 
 // Discord forwards are standalone messages: the snapshot carries the source content and attachments, and no extra content or reply reference is allowed.
-export async function forwardResolvedMessage({ account, channel }, { guildId, channelId, source, nonce }, signal) {
+export async function forwardResolvedMessage(resolution, { guildId, channelId, source, nonce }, signal) {
   validateForwardSource(source);
-  signal?.throwIfAborted();
-  const messageNonce = nonce ?? randomBytes(12).toString('hex');
-  const message = await postMessage(account, channelId, {
+  const { accountId, nonce: messageNonce, message } = await postMessage(resolution, { guildId, channelId, nonce }, {
     message_reference: {
       type: 1, message_id: source.messageId, channel_id: source.channelId,
       ...(source.guildId ? { guild_id: source.guildId } : {}), fail_if_not_exists: true,
     },
-    nonce: messageNonce,
-    enforce_nonce: true,
   }, signal);
 
-  return {
-    accountId: account.id,
-    nonce: messageNonce,
-    source: { guildId: source.guildId || null, channelId: source.channelId, messageId: source.messageId },
-    message: shapeMessage({ ...message, channel_id: message.channel_id || channelId, guild_id: message.guild_id || channel.guild_id || guildId }),
-  };
+  return { accountId, nonce: messageNonce, source: { guildId: source.guildId || null, channelId: source.channelId, messageId: source.messageId }, message };
 }
 
 export async function forwardMessages(service, { guildId, channelId, messages, intervalMs = 650, batchId }, { sleep = wait, signal } = {}) {
-  assertSnowflake(channelId, 'channelId');
-  if (guildId) assertSnowflake(guildId, 'guildId');
-  if (!Array.isArray(messages) || messages.length < 1 || messages.length > 10) throw new Error('Provide 1 to 10 messages to forward');
-  if (!Number.isSafeInteger(intervalMs) || intervalMs < 0 || intervalMs > 5000) throw new Error('intervalMs must be an integer from 0 to 5000');
-  if (batchId !== undefined && !/^[A-Za-z0-9_-]{1,20}$/.test(batchId)) throw new Error('batchId must contain 1 to 20 letters, digits, underscores, or hyphens');
+  validateBatch({ guildId, channelId, messages, intervalMs, batchId }, 10, 'Provide 1 to 10 messages to forward');
   const sources = messages.map((message) => {
     const source = service.normalizeReadSource(message);
     if (!source.messageId) throw new Error('Each forward needs a message URL or channelId and messageId');
@@ -171,24 +166,5 @@ export async function forwardMessages(service, { guildId, channelId, messages, i
   });
   if (new Set(sources.map((source) => source.messageId)).size !== sources.length) throw new Error('Each message can only be forwarded once per call');
 
-  const identifier = batchId || randomBytes(10).toString('hex');
-  const sentMessages = [];
-  let failedMessageIndex = 0;
-  try {
-    signal?.throwIfAborted();
-    const resolution = await service.resolveChannel(channelId, guildId);
-    for (const [index, source] of sources.entries()) {
-      failedMessageIndex = index;
-      signal?.throwIfAborted();
-      if (index > 0 && intervalMs > 0) await sleep(intervalMs, undefined, signal ? { signal } : undefined);
-      sentMessages.push(await forwardResolvedMessage(resolution, { guildId, channelId, source, nonce: `${identifier}:f${index}` }, signal));
-    }
-  } catch (error) {
-    error.batchId = identifier;
-    error.sentMessages = sentMessages;
-    error.failedMessageIndex = failedMessageIndex;
-    throw error;
-  }
-
-  return { batchId: identifier, sentMessages };
+  return sendInOrder(service, { guildId, channelId, intervalMs, batchId }, sources, (resolution, source, index, identifier) => forwardResolvedMessage(resolution, { guildId, channelId, source, nonce: `${identifier}:f${index}` }, signal), { sleep, signal });
 }

@@ -6,14 +6,15 @@ import { getUserInfo } from '../users.mjs';
 
 export const readSnowflake = z.string().regex(/^\d{17,20}$/).describe('Discord snowflake ID');
 const source = { url: z.string().url().optional(), guildId: readSnowflake.optional(), channelId: readSnowflake.optional(), messageId: readSnowflake.optional(), limit: z.number().int().min(1).max(250).default(50), includeImages: z.boolean().default(false) };
+const searchHas = z.enum(['image', 'sound', 'video', 'file', 'sticker', 'embed', 'link', 'poll', 'snapshot']);
 const sharedFields = {
   discord_list_servers: { refresh: z.boolean().default(false) },
   discord_list_channels: { guildId: readSnowflake, includeThreads: z.boolean().default(true), includeArchivedThreads: z.boolean().default(false), parentChannelIds: z.array(readSnowflake).default([]), maxArchivedPerParent: z.number().int().min(1).max(500).default(200) },
   discord_find_members: { guildId: readSnowflake, query: z.string().trim().min(1).max(100), limit: z.number().int().min(1).max(100).default(25) },
-  discord_search_messages: { guildId: readSnowflake, query: z.string().max(1024).default(''), channelIds: z.array(readSnowflake).max(500).default([]), authorIds: z.array(readSnowflake).max(100).default([]), mentionsUserIds: z.array(readSnowflake).max(100).default([]), repliedToMessageIds: z.array(readSnowflake).max(100).default([]), has: z.array(z.enum(['image', 'sound', 'video', 'file', 'sticker', 'embed', 'link', 'poll', 'snapshot'])).default([]), embedTypes: z.array(z.enum(['image', 'video', 'gif', 'sound', 'article'])).default([]), beforeId: readSnowflake.optional(), afterId: readSnowflake.optional(), pinned: z.boolean().optional(), includeNsfw: z.boolean().default(false), sortBy: z.enum(['timestamp', 'relevance']).default('timestamp'), sortOrder: z.enum(['asc', 'desc']).default('desc'), limit: z.number().int().min(1).max(250).default(250), offset: z.number().int().min(0).max(9975).default(0), accountId: z.string().optional() },
+  discord_search_messages: { guildId: readSnowflake, query: z.string().max(1024).default(''), channelIds: z.array(readSnowflake).max(500).default([]), authorIds: z.array(readSnowflake).max(100).default([]), mentionsUserIds: z.array(readSnowflake).max(100).default([]), repliedToMessageIds: z.array(readSnowflake).max(100).default([]), has: z.array(searchHas).default([]), embedTypes: z.array(z.enum(['image', 'video', 'gif', 'sound', 'article'])).default([]), beforeId: readSnowflake.optional(), afterId: readSnowflake.optional(), pinned: z.boolean().optional(), includeNsfw: z.boolean().default(false), sortBy: z.enum(['timestamp', 'relevance']).default('timestamp'), sortOrder: z.enum(['asc', 'desc']).default('desc'), limit: z.number().int().min(1).max(250).default(250), offset: z.number().int().min(0).max(9975).default(0), accountId: z.string().optional() },
   discord_search_batch: {
     guildId: readSnowflake,
-    searches: z.array(z.object({ query: z.string().max(1024).default(''), channelIds: z.array(readSnowflake).max(25).default([]), authorIds: z.array(readSnowflake).max(25).default([]), has: z.array(z.enum(['image', 'sound', 'video', 'file', 'sticker', 'embed', 'link', 'poll', 'snapshot'])).max(9).default([]) }).strict()).min(1).max(10)
+    searches: z.array(z.object({ query: z.string().max(1024).default(''), channelIds: z.array(readSnowflake).max(25).default([]), authorIds: z.array(readSnowflake).max(25).default([]), has: z.array(searchHas).max(9).default([]) }).strict()).min(1).max(10)
       .describe('Each search is one keyword or filter variant; channelIds/authorIds here override the shared filters'),
     channelIds: z.array(readSnowflake).max(100).default([]), authorIds: z.array(readSnowflake).max(100).default([]), beforeId: readSnowflake.optional(), afterId: readSnowflake.optional(),
     sortOrder: z.enum(['asc', 'desc']).default('desc'), limitPerSearch: z.number().int().min(1).max(100).default(25), includeNsfw: z.boolean().default(false), accountId: z.string().optional(),
@@ -34,17 +35,18 @@ const sharedFields = {
   discord_user_info: { guildId: readSnowflake.optional(), userId: readSnowflake, accountId: z.string().optional() },
 };
 const workerSearchFields = ['guildId', 'query', 'channelIds', 'authorIds', 'mentionsUserIds', 'beforeId', 'afterId', 'sortOrder', 'limit', 'offset'];
+// Nova's worker gets narrower fields: no account routing, smaller limits, and a required guild for user info.
+const narrowForWorker = {
+  discord_list_channels: ({ guildId, includeThreads }) => ({ guildId, includeThreads }),
+  discord_search_messages: (fields) => ({ ...Object.fromEntries(workerSearchFields.map((field) => [field, fields[field]])), channelIds: z.array(readSnowflake).max(100).default([]), limit: z.number().int().min(1).max(250).default(50) }),
+  discord_browse_messages: (fields) => ({ ...fields, limit: source.limit }),
+  discord_search_batch: ({ accountId, includeNsfw, ...fields }) => fields,
+  discord_read_activity: ({ accountId, ...fields }) => ({ ...fields, maxMessages: z.number().int().min(1).max(8000).default(4000), maxCharacters: z.number().int().min(2000).max(180000).default(120000) }),
+  discord_user_info: () => ({ guildId: readSnowflake, userId: readSnowflake }),
+};
+const workerFields = Object.fromEntries(Object.entries(sharedFields).map(([name, fields]) => [name, narrowForWorker[name]?.(fields) ?? fields]));
 export function readToolFields(name, { trustedLocal = false } = {}) {
-  const fields = sharedFields[name];
-  if (!fields) return null;
-  if (trustedLocal) return fields;
-  if (name === 'discord_list_channels') return { guildId: fields.guildId, includeThreads: fields.includeThreads };
-  if (name === 'discord_search_messages') return { ...Object.fromEntries(workerSearchFields.map((field) => [field, fields[field]])), channelIds: z.array(readSnowflake).max(100).default([]), limit: z.number().int().min(1).max(250).default(50) };
-  if (name === 'discord_browse_messages') return { ...fields, limit: source.limit };
-  if (name === 'discord_search_batch') { const { accountId, includeNsfw, ...workerFields } = fields; return workerFields; }
-  if (name === 'discord_read_activity') { const { accountId, ...workerFields } = fields; return { ...workerFields, maxMessages: z.number().int().min(1).max(8000).default(4000), maxCharacters: z.number().int().min(2000).max(180000).default(120000) }; }
-  if (name === 'discord_user_info') return { guildId: readSnowflake, userId: readSnowflake };
-  return fields;
+  return (trustedLocal ? sharedFields : workerFields)[name] || null;
 }
 
 export async function executeSharedReadTool(service, name, args, signal) {

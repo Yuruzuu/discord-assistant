@@ -37,7 +37,7 @@ export async function searchMessages(service, {
   let totalResults = null;
   let doingHistoricalIndex = false;
   let pagesFetched = 0;
-  const fetchPage = async (pageOffset, requested) => {
+  const fetchPage = async ({ offset: pageOffset, requested }) => {
     signal?.throwIfAborted();
     const result = await account.client.searchGuildMessages(guildId, { ...filters, limit: requested, offset: pageOffset }, { signal });
     signal?.throwIfAborted();
@@ -56,21 +56,21 @@ export async function searchMessages(service, {
     for (const thread of result.threads || []) threads.set(thread.id, shapeChannel({ ...thread, guild_id: thread.guild_id || guildId }));
     nextOffset += requested;
   };
-  const firstRequested = Math.min(pageSize, limit, maximumOffset + pageSize - nextOffset);
-  absorb(await fetchPage(nextOffset, firstRequested), firstRequested);
-  // The first page reports the total, so the remaining pages are known up front and fetched a few at a time instead of one by one.
-  while (messages.size < limit && nextOffset <= maximumOffset && pagesFetched < 20 && (totalResults === null || nextOffset < totalResults)) {
+  // Until a page reports the total, pages go one at a time; after that the next few are known up front and fetched together.
+  const planPages = () => {
     const pages = [];
-    let plannedOffset = nextOffset;
+    let pageOffset = nextOffset;
     let planned = messages.size;
-    while (pages.length < 3 && planned < limit && plannedOffset <= maximumOffset && pagesFetched + pages.length < 20 && (totalResults === null || plannedOffset < totalResults)) {
-      const requested = Math.min(pageSize, limit - planned, maximumOffset + pageSize - plannedOffset);
-      pages.push({ offset: plannedOffset, requested });
-      plannedOffset += requested;
+    while (pages.length < (totalResults === null ? 1 : 3) && planned < limit && pageOffset <= maximumOffset && pagesFetched + pages.length < 20 && (totalResults === null || pageOffset < totalResults)) {
+      const requested = Math.min(pageSize, limit - planned, maximumOffset + pageSize - pageOffset);
+      pages.push({ offset: pageOffset, requested });
+      pageOffset += requested;
       planned += requested;
-      if (totalResults === null) break;
     }
-    const results = await mapConcurrent(pages, 3, (page) => fetchPage(page.offset, page.requested));
+    return pages;
+  };
+  for (let pages = planPages(); pages.length; pages = planPages()) {
+    const results = await mapConcurrent(pages, 3, fetchPage);
     for (const [index, result] of results.entries()) absorb(result, pages[index].requested);
   }
   const hasMore = totalResults === null || nextOffset < totalResults;

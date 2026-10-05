@@ -5,11 +5,10 @@ import { forwardMessages, listExpressions, sendMessage, sendMessageBatch } from 
 import { register, success, writeAnnotations } from './tool-results.mjs';
 import { loadInstructions } from './instructions.mjs';
 import { registerProactiveTools } from './proactive/tools.mjs';
-import { readToolFields, executeSharedReadTool } from './proactive/read-tool-registry.mjs';
+import { readToolFields, executeSharedReadTool, readSnowflake as snowflake } from './proactive/read-tool-registry.mjs';
 import { createDiscordReadTools } from './proactive/read-tools.mjs';
 import { addReaction } from './reactions.mjs';
 
-const snowflake = z.string().regex(/^\d{17,20}$/).describe('Discord snowflake ID');
 const messageFields = {
   content: z.string().max(2000).optional(),
   stickerIds: z.array(snowflake).max(3).default([]),
@@ -24,22 +23,27 @@ export function createDiscordMcpServer(service, { novaOptions = {} } = {}) {
     },
   );
 
-  register(server, 'discord_list_servers', {
+  // Shared read tools take schema and implementation from the registry; the read-tools loop below skips them.
+  const existingReads = new Set();
+  const registerSharedRead = (name, options, respond = success) => {
+    existingReads.add(name);
+    register(server, name, { ...options, inputSchema: readToolFields(name, { trustedLocal: true }) }, async (args) => respond(await executeSharedReadTool(service, name, args)));
+  };
+  const withImages = ({ toolImages, ...result }) => success(result, toolImages);
+
+  registerSharedRead('discord_list_servers', {
     title: 'List Discord Servers',
     description: 'List every Discord server visible to the configured bot account(s), including account health.',
-    inputSchema: readToolFields('discord_list_servers', { trustedLocal: true }),
-  }, async ({ refresh }) => {
-    const result = await executeSharedReadTool(service, 'discord_list_servers', { refresh });
+  }, (result) => {
     const allAccountsFailed = result.accounts.length > 0 && result.accounts.every((account) => account.error);
 
     return { ...success(result), ...(allAccountsFailed ? { isError: true } : {}) };
   });
 
-  register(server, 'discord_list_channels', {
+  registerSharedRead('discord_list_channels', {
     title: 'List Discord Channels',
     description: 'List a server channel tree. Includes active threads by default and can page archived public/joined-private threads.',
-    inputSchema: readToolFields('discord_list_channels', { trustedLocal: true }),
-  }, async (args) => success(await executeSharedReadTool(service, 'discord_list_channels', args)));
+  });
 
   register(server, 'discord_list_tickets', {
     title: 'List Discord Tickets',
@@ -77,29 +81,20 @@ export function createDiscordMcpServer(service, { novaOptions = {} } = {}) {
     return success(result.structured, result.images);
   });
 
-  register(server, 'discord_search_messages', {
+  registerSharedRead('discord_search_messages', {
     title: 'Search Discord Server Messages',
     description: 'Search Discord indexed messages across bot-accessible server channels. Returns up to 250 matches by paging Discord search results, with message links and continuation arguments. Default sort is newest first. Use discord_message_context to jump into a result conversation.',
-    inputSchema: readToolFields('discord_search_messages', { trustedLocal: true }),
-  }, async (args) => success(await executeSharedReadTool(service, 'discord_search_messages', args)));
+  });
 
-  register(server, 'discord_message_context', {
+  registerSharedRead('discord_message_context', {
     title: 'Jump to Discord Message Context',
     description: 'Open a specific message link or message ID and read its surrounding conversation in chronological order. Returns the anchor, up to 250 messages, and arguments for browsing older or newer context. Images are opt-in.',
-    inputSchema: readToolFields('discord_message_context', { trustedLocal: true }),
-  }, async (args) => {
-    const { toolImages, ...result } = await executeSharedReadTool(service, 'discord_message_context', args);
-    return success(result, toolImages);
-  });
+  }, withImages);
 
-  register(server, 'discord_browse_messages', {
+  registerSharedRead('discord_browse_messages', {
     title: 'Browse Discord Conversation History',
     description: 'Continue through channel history with before/after cursors, or open an around/message anchor. Reads up to 250 messages per call and returns chronological messages plus older/newer navigation arguments.',
-    inputSchema: readToolFields('discord_browse_messages', { trustedLocal: true }),
-  }, async (args) => {
-    const { toolImages, ...result } = await executeSharedReadTool(service, 'discord_browse_messages', args);
-    return success(result, toolImages);
-  });
+  }, withImages);
 
   register(server, 'discord_fetch_attachment', {
     title: 'Fetch Discord Image',
@@ -186,11 +181,10 @@ export function createDiscordMcpServer(service, { novaOptions = {} } = {}) {
     },
   }, async (args) => success(await forwardMessages(service, args)));
 
-  register(server, 'discord_user_info', {
+  registerSharedRead('discord_user_info', {
     title: 'Get Discord User Info',
     description: 'Read a public user profile, avatar and account creation date. With guildId, also return server nickname, join date and roles. Does not report live presence.',
-    inputSchema: readToolFields('discord_user_info', { trustedLocal: true }),
-  }, async (args) => success(await executeSharedReadTool(service, 'discord_user_info', args)));
+  });
 
   register(server, 'discord_add_reaction', {
     title: 'React to Discord Message',
@@ -199,9 +193,7 @@ export function createDiscordMcpServer(service, { novaOptions = {} } = {}) {
     inputSchema: { guildId: snowflake.optional(), channelId: snowflake, messageId: snowflake, emoji: z.string().min(1).max(100) },
   }, async (args) => success(await addReaction(service, args)));
 
-
   const readTools = createDiscordReadTools(service, { trustedLocal: true, directMessages: true }, novaOptions);
-  const existingReads = new Set(['discord_list_servers', 'discord_list_channels', 'discord_search_messages', 'discord_message_context', 'discord_browse_messages', 'discord_user_info']);
   for (const tool of readTools.registry) {
     if (existingReads.has(tool.name)) continue;
     register(server, tool.name, {
