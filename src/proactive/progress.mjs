@@ -154,7 +154,7 @@ export function createProgressReporter({ send, edit, remove, signal, now = Date.
     if (wait <= 0) { await flush(deliverySignal); return; }
     // Throttled edits are deferred, never dropped, so the log always catches up with the latest finished step.
     if (!flushTimer) {
-      flushTimer = setTimeout(() => { flushTimer = null; queued = queued.then(() => flush()); }, wait);
+      flushTimer = setTimeout(() => { flushTimer = null; queued = queued.then(() => flush()).catch((error) => { onError(error); }); }, wait);
       flushTimer.unref?.();
     }
   }
@@ -177,10 +177,12 @@ export function createProgressReporter({ send, edit, remove, signal, now = Date.
     await attempt(deliverySignal, async (sendSignal) => onSent(await send(content, sendSignal, index)));
   }
 
-  async function report(event, deliverySignal) {
+  async function report(rawEvent, deliverySignal) {
     if (closed || signal?.aborted || deliverySignal?.aborted || attempted >= maxMessages) return;
-    const activity = Object.hasOwn(activities, event?.toolName) ? activities[event.toolName] : null;
-    if (!activity || !['started', 'completed', 'failed'].includes(event.stage)) return;
+    const activity = Object.hasOwn(activities, rawEvent?.toolName) ? activities[rawEvent.toolName] : null;
+    if (!activity || !['started', 'completed', 'failed'].includes(rawEvent.stage)) return;
+    // Tool arguments come from the model and may be null or malformed; renderers only ever see a plain object.
+    const event = { ...rawEvent, arguments: rawEvent.arguments && typeof rawEvent.arguments === 'object' && !Array.isArray(rawEvent.arguments) ? rawEvent.arguments : {} };
     const timestamp = now();
     const resultCount = Number.isSafeInteger(event.resultCount) && event.resultCount >= 0 ? event.resultCount : undefined;
     return edit ? logStep(event, timestamp, resultCount, deliverySignal) : announce(event, activity, timestamp, resultCount, deliverySignal);
@@ -189,8 +191,9 @@ export function createProgressReporter({ send, edit, remove, signal, now = Date.
   function close() { closed = true; cancellation.abort(); clearTimeout(flushTimer); flushTimer = null; }
 
   return {
+    // Progress is decoration: a rendering or delivery bug is reported, never allowed to reject the tool callback or stall later updates.
     receive: (event, deliverySignal) => {
-      queued = queued.then(() => report(event, deliverySignal));
+      queued = queued.then(() => report(event, deliverySignal)).catch((error) => { onError(error); });
       return queued;
     },
     close,

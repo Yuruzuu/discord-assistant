@@ -53,7 +53,8 @@ export function createProactiveEngine({ botUserId, guildId, channelId, directMes
     const lines = posted.map((receipt) => `Posted in <#${receipt.message.channelId}>: ${receipt.message.url}`);
     if (failure) lines.push(`I couldn’t post in <#${items[failure.failedMessageIndex ?? posted.length]?.channelId}>: ${String(failure.message).slice(0, 300)}`);
     if (lines.length) await counted(sendReplies.confirmation(lines.join('\n'), trigger, signal));
-    if (failure) throw failure;
+    // Posts elsewhere are counted in channelMessages only, whether or not a later one fails.
+    if (failure) { failure.sentMessages = []; throw failure; }
   }
 
   function takeAllBatches() {
@@ -191,12 +192,14 @@ export function createProactiveEngine({ botUserId, guildId, channelId, directMes
       const remaining = response.messages.slice(streamed);
       const sent = remaining.length ? await sendReplies(remaining, trigger, signal, { offset: streamed, replyToMessageId }) : { sentMessages: [] };
       if (!streamed && sent.sentMessages.length) statistics.lastFirstResponseMs = now() - batch.firstReceivedAt;
+      // Count delivered bubbles right away, so a later failure (files, posts, forwards) cannot hide them from the statistics.
+      statistics.sentMessages += sent.sentMessages.length;
+      if (sent.sentMessages.length) lastReplyAt = now();
       if (response.files?.length) await counted(sendReplies.files(response.files, trigger, signal, { replyToMessageId: streamed || sent.sentMessages.length ? undefined : replyToMessageId }));
       if (response.images?.length) await counted(sendReplies.images(response.images, trigger, signal));
       if (response.channelMessages?.length) await postElsewhere(response.channelMessages, trigger, signal);
       if (response.forwards?.length) { const forwarded = await counted(sendReplies.forwards(response.forwards, trigger, signal)); statistics.forwards += forwarded; }
       if (response.controls) await sendReplies.controls?.(trigger, signal);
-      statistics.sentMessages += sent.sentMessages.length;
       replied();
     } catch (error) {
       if (stopped || signal.aborted) return;

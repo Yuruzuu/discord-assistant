@@ -341,3 +341,25 @@ test('a full reply plan delivers in order and counts each confirmed message once
     assert.equal(filesOnly.engine.status().sentMessages, 1);
   } finally { filesOnly.engine.stop(); }
 });
+
+test('final bubbles stay counted when a later delivery step fails, and failed posts elsewhere only count as channel messages', async () => {
+  const sendReplies = async (messages) => ({ sentMessages: messages });
+  sendReplies.forwards = async () => { throw new Error('Unknown Message'); };
+  const { engine } = fixture({ sendReplies, generateReply: async () => ({ shouldReply: true, messages: [{ content: 'one' }, { content: 'two' }], forwards: [{ channelId, messageId: '400000000000000999' }] }) });
+  try {
+    assert.equal(await engine.receive(message({ content: `<@${botUserId}> forward it` })), true);
+    await until(() => engine.status().errors === 1);
+    assert.equal(engine.status().sentMessages, 2, 'both delivered bubbles are counted despite the failed forward');
+  } finally { engine.stop(); }
+
+  const posting = async (messages) => ({ sentMessages: messages });
+  posting.channelMessages = async () => { const error = new Error('Missing Permissions'); error.sentMessages = [{ message: { channelId, url: 'https://discord.com/channels/1/2/3' } }]; error.failedMessageIndex = 1; throw error; };
+  posting.confirmation = async (content) => ({ sentMessages: [content] });
+  const second = fixture({ sendReplies: posting, generateReply: async () => ({ shouldReply: true, messages: [{ content: 'on it' }], channelMessages: [{ channelId, content: 'a', notify: false }, { channelId, content: 'b', notify: false }] }) });
+  try {
+    await second.engine.receive(message({ content: `<@${botUserId}> post it` }));
+    await until(() => second.engine.status().errors === 1);
+    assert.equal(second.engine.status().channelMessages, 1);
+    assert.equal(second.engine.status().sentMessages, 2, 'the bubble and the host confirmation, not the post elsewhere');
+  } finally { second.engine.stop(); }
+});

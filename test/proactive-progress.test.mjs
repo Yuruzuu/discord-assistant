@@ -182,3 +182,15 @@ test('the progress log edits each step from doing to done, defers throttled edit
   await progress.finish();
   assert.deepEqual(edits.at(-1), { content: 'I checked your connected apps, your Gmail and your Google Drive. One lookup didn’t work.', options: { components: [] } });
 });
+
+test('null or malformed tool arguments never break the progress log', async () => {
+  const lines = [];
+  const progress = createProgressReporter({ intervalMs: 0, send: async (content) => { lines.push(content); return { sentMessages: [{ message: { id: 'message' } }] }; }, edit: async (_, content) => { lines.push(content); } });
+  for (const toolName of ['discord_search_messages', 'discord_search_batch', 'discord_read_activity', 'apps_call_tool', 'discord_user_info']) {
+    await progress.receive({ stage: 'started', toolName, callId: toolName, arguments: null });
+    await progress.receive({ stage: 'completed', toolName, callId: toolName, arguments: ['not', 'an', 'object'], resultCount: 2 });
+  }
+  assert.equal(lines.at(-1).split('\n').length, 5, 'every step still renders');
+  assert.match(lines.at(-1), /^I’ve searched the server for messages and found \*2\* results\./);
+  progress.close();
+});
