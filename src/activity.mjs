@@ -11,30 +11,43 @@ const cacheTtlMs = 10 * 60 * 1000;
 const cacheLimit = 60000;
 const caches = new WeakMap();
 const formatters = new Map();
+const formats = {
+  parts: ['en-US', { hourCycle: 'h23', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' }],
+  day: ['en-US', { year: 'numeric', month: '2-digit', day: '2-digit' }],
+  time: ['en-GB', { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }],
+  dayTime: ['en-GB', { hour: '2-digit', minute: '2-digit', hourCycle: 'h23', month: 'short', day: 'numeric' }],
+};
 
 export function snowflakeAt(milliseconds) {
   return String((BigInt(Math.max(0, Math.floor(milliseconds))) - discordEpoch) << 22n);
 }
 
+function formatter(timeZone, kind) {
+  const key = `${kind}:${timeZone}`;
+  let format = formatters.get(key);
+  if (!format) { const [locale, options] = formats[kind]; format = new Intl.DateTimeFormat(locale, { timeZone, ...options }); formatters.set(key, format); }
+  return format;
+}
+
+function localParts(timeZone, kind, instant) {
+  return Object.fromEntries(formatter(timeZone, kind).formatToParts(new Date(instant)).filter((part) => part.type !== 'literal').map((part) => [part.type, Number(part.value)]));
+}
+
 function zoneOffsetMs(timeZone, instant) {
-  const parts = Object.fromEntries(new Intl.DateTimeFormat('en-US', { timeZone, hourCycle: 'h23', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' })
-    .formatToParts(new Date(instant)).filter((part) => part.type !== 'literal').map((part) => [part.type, Number(part.value)]));
+  const parts = localParts(timeZone, 'parts', instant);
   return Date.UTC(parts.year, parts.month - 1, parts.day, parts.hour, parts.minute, parts.second) - Math.floor(instant / 1000) * 1000;
 }
 
 // Local midnight in an IANA zone without a date library: guess, then correct by the zone offset at that instant (twice, for DST edges).
 export function startOfDay(timeZone, instant, dayOffset = 0) {
-  const parts = Object.fromEntries(new Intl.DateTimeFormat('en-US', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' })
-    .formatToParts(new Date(instant)).filter((part) => part.type !== 'literal').map((part) => [part.type, Number(part.value)]));
-  const local = Date.UTC(parts.year, parts.month - 1, parts.day + dayOffset);
-  let guess = local - zoneOffsetMs(timeZone, local);
-  guess = local - zoneOffsetMs(timeZone, guess);
-  return guess;
+  const { year, month, day } = localParts(timeZone, 'day', instant);
+  const local = Date.UTC(year, month - 1, day + dayOffset);
+  return local - zoneOffsetMs(timeZone, local - zoneOffsetMs(timeZone, local));
 }
 
 export function resolveTimeZone(value) {
   const zone = value || Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
-  try { new Intl.DateTimeFormat('en-US', { timeZone: zone }); return zone; }
+  try { formatter(zone, 'day'); return zone; }
   catch { throw new Error(`Unknown time zone: ${zone}`); }
 }
 
@@ -54,7 +67,7 @@ export function activityWindow({ day, hours = 24, since, until, timeZone }, now 
 
 function cacheFor(client) {
   let cache = caches.get(client);
-  if (!cache) { cache = { channels: new Map(), size: 0 }; caches.set(client, cache); }
+  if (!cache) { cache = { channels: new Map(), archives: new Map(), size: 0 }; caches.set(client, cache); }
   return cache;
 }
 
@@ -62,7 +75,6 @@ function cacheFor(client) {
 // "include archived threads", recently archived public threads are discovered per parent, newest-archived first, with an early stop.
 async function archivedThreads(client, parents, windowStart, { signal, deadline, now, concurrency }) {
   const cache = cacheFor(client);
-  cache.archives ||= new Map();
   let errors = 0;
   const found = await mapConcurrent(parents, concurrency, async (parent) => {
     if (deadline.aborted) return [];
@@ -83,6 +95,7 @@ function displayName(user) {
 }
 
 function compact(message) {
+  const key = BigInt(message.id);
   const names = new Map((message.mentions || []).map((user) => [user.id, displayName(user)]));
   let text = String(message.content || '')
     .replace(/<@!?(\d{17,20})>/g, (match, id) => (names.has(id) ? `@${names.get(id)}` : match))
@@ -94,7 +107,7 @@ function compact(message) {
   const attachments = (message.attachments || []).map((attachment) => attachment.filename || 'file');
   if (message.sticker_items?.length) attachments.push(...message.sticker_items.map((sticker) => `sticker:${sticker.name}`));
   return {
-    id: message.id, authorId: message.author?.id || null, author: displayName(message.author), bot: Boolean(message.author?.bot || message.webhook_id),
+    id: message.id, key, authorId: message.author?.id || null, author: displayName(message.author), bot: Boolean(message.author?.bot || message.webhook_id),
     at: Date.parse(message.timestamp) || snowflakeTimestamp(message.id), text, attachments,
     ...(message.referenced_message?.author ? { replyTo: displayName(message.referenced_message.author) } : {}),
   };
@@ -102,47 +115,55 @@ function compact(message) {
 
 async function channelMessages(client, channel, startId, endMs, { maxMessages, budget, signal, now }) {
   const cache = cacheFor(client);
-  let entry = cache.channels.get(channel.id);
-  const reusable = entry && now() - entry.fetchedAt < cacheTtlMs && compareSnowflakes(entry.coveredFrom, startId) <= 0;
-  if (!reusable) {
-    if (entry) cache.size -= entry.messages.size;
-    entry = { coveredFrom: startId, newestId: startId, messages: new Map(), fetchedAt: now(), complete: false };
-  }
-  let after = entry.newestId;
+  const cached = cache.channels.get(channel.id);
+  const entry = cached && now() - cached.fetchedAt < cacheTtlMs && compareSnowflakes(cached.coveredFrom, startId) <= 0
+    ? cached : { coveredFrom: startId, newestId: startId, messages: new Map(), fetchedAt: now(), counted: 0 };
   let complete = true;
   for (;;) {
     signal?.throwIfAborted();
     if (budget.exhausted()) { complete = false; break; }
-    const page = await client.listMessages(channel.id, { limit: pageSize, after });
+    const page = await client.listMessages(channel.id, { limit: pageSize, after: entry.newestId });
     if (!Array.isArray(page) || !page.length) break;
-    let newest = after;
+    let newest = entry.newestId;
+    let newestKey = BigInt(newest);
     for (const message of page) {
-      if (compareSnowflakes(message.id, newest) > 0) newest = message.id;
-      if (!entry.messages.has(message.id)) { entry.messages.set(message.id, compact(message)); cache.size += 1; budget.take(1); }
+      let compacted = entry.messages.get(message.id);
+      if (!compacted) { compacted = compact(message); entry.messages.set(message.id, compacted); budget.take(1); }
+      if (compacted.key > newestKey) { newestKey = compacted.key; newest = message.id; }
     }
-    after = newest;
     entry.newestId = newest;
     if (page.length < pageSize || snowflakeTimestamp(newest) > endMs) break;
     if (entry.messages.size >= maxMessages) { complete = false; break; }
   }
   entry.fetchedAt = now();
+  // Messages are counted when an entry is stored, so a read that fails midway never skews the eviction total.
+  cache.size += entry.messages.size - (cache.channels.get(channel.id)?.counted ?? 0);
+  entry.counted = entry.messages.size;
   cache.channels.delete(channel.id);
   cache.channels.set(channel.id, entry);
   while (cache.size > cacheLimit && cache.channels.size > 1) {
     const [oldestId, oldest] = cache.channels.entries().next().value;
     cache.channels.delete(oldestId);
-    cache.size -= oldest.messages.size;
+    cache.size -= oldest.counted;
   }
-  return { messages: [...entry.messages.values()].filter((message) => compareSnowflakes(message.id, startId) > 0 && message.at <= endMs).sort((left, right) => compareSnowflakes(left.id, right.id)), complete };
+  const startKey = BigInt(startId);
+  const messages = [...entry.messages.values()].filter((message) => message.key > startKey && message.at <= endMs);
+  return { messages: messages.sort((left, right) => (left.key < right.key ? -1 : left.key > right.key ? 1 : 0)), complete };
 }
 
-function formatTime(timeZone, at, includeDate) {
-  const key = `${timeZone}:${includeDate}`;
-  if (!formatters.has(key)) formatters.set(key, new Intl.DateTimeFormat('en-GB', { timeZone, hour: '2-digit', minute: '2-digit', hourCycle: 'h23', ...(includeDate ? { month: 'short', day: 'numeric' } : {}) }));
-  return formatters.get(key).format(new Date(at));
+// Zone offsets are whole minutes for any Discord-era instant, so one Intl call per minute labels every line in it on every render pass.
+function timeLabels(timeZone, includeDate) {
+  const format = formatter(timeZone, includeDate ? 'dayTime' : 'time');
+  const labels = new Map();
+  return (at) => {
+    const minute = Math.floor(at / 60000);
+    let label = labels.get(minute);
+    if (label === undefined) { label = format.format(new Date(at)); labels.set(minute, label); }
+    return label;
+  };
 }
 
-function render(messages, { timeZone, maxLength, multiDay }) {
+function render(messages, { label, maxLength }) {
   const lines = [];
   let previous;
   for (const message of messages) {
@@ -153,7 +174,7 @@ function render(messages, { timeZone, maxLength, multiDay }) {
     if (previous && previous.authorId === message.authorId && message.at - previous.at < 120000 && !message.replyTo && lines.at(-1).length + text.length < maxLength * 3) {
       lines[lines.length - 1] += ` / ${text}`;
     } else {
-      lines.push(`[${formatTime(timeZone, message.at, multiDay)}|${Math.floor(message.at / 1000)}] ${message.author}${message.replyTo ? ` (reply to ${message.replyTo})` : ''}: ${text}`);
+      lines.push(`[${label(message.at)}|${Math.floor(message.at / 1000)}] ${message.author}${message.replyTo ? ` (reply to ${message.replyTo})` : ''}: ${text}`);
     }
     previous = message;
   }
@@ -215,7 +236,6 @@ export async function readServerActivity(service, {
   })() : Promise.resolve([]);
   const [knownResults, discovered] = await Promise.all([mapConcurrent(known, concurrency, read), discovery]);
   const results = [...knownResults, ...await mapConcurrent(discovered, concurrency, read)];
-  const candidates = [...known, ...discovered];
   const skipped = channelIds.filter((id) => !byId.has(id)).map((channelId) => ({ channelId, reason: 'not a readable channel in this server' }));
 
   const terms = keywords.map((keyword) => keyword.trim().toLowerCase());
@@ -226,7 +246,7 @@ export async function readServerActivity(service, {
     if (notFetched) { skipped.push({ channelId: channel.id, name: channel.name || null, reason: 'not read before the time or message limit; request it with channelIds' }); continue; }
     let selected = messages;
     if (!includeBots) { const humans = selected.filter((message) => !message.bot); botMessagesSkipped += selected.length - humans.length; selected = humans; }
-    if (terms.length) selected = selected.filter((message) => terms.some((term) => message.text.toLowerCase().includes(term)));
+    if (terms.length) selected = selected.filter((message) => { const text = message.text.toLowerCase(); return terms.some((term) => text.includes(term)); });
     if (!selected.length) continue;
     const counts = new Map();
     for (const message of selected) {
@@ -239,22 +259,24 @@ export async function readServerActivity(service, {
   }
   sections.sort((left, right) => right.selected.length - left.selected.length);
 
-  const multiDay = window.end - window.start > 24 * 3600000;
-  let maxLength = 400;
+  const label = timeLabels(timeZone, window.end - window.start > 24 * 3600000);
+  let maxLength;
   let rendered;
+  let sizes;
+  let totalCharacters;
   // Shrink long messages first; only if that is not enough, keep each channel's most recent lines within a share of the budget.
   for (const length of [400, 220, 140]) {
     maxLength = length;
-    rendered = sections.map((section) => render(section.selected, { timeZone, maxLength, multiDay }));
-    if (rendered.reduce((sum, lines) => sum + lines.reduce((total, line) => total + line.length + 1, 0), 0) <= maxCharacters) break;
+    rendered = sections.map((section) => render(section.selected, { label, maxLength }));
+    sizes = rendered.map((lines) => lines.reduce((total, line) => total + line.length + 1, 0));
+    totalCharacters = sizes.reduce((sum, size) => sum + size, 0);
+    if (totalCharacters <= maxCharacters) break;
   }
-  const totalCharacters = rendered.reduce((sum, lines) => sum + lines.reduce((total, line) => total + line.length + 1, 0), 0);
   const channelsOut = sections.map((section, index) => {
     let lines = rendered[index];
     let omittedEarlier = 0;
     if (totalCharacters > maxCharacters) {
-      const size = lines.reduce((total, line) => total + line.length + 1, 0);
-      const share = Math.max(1500, Math.floor(maxCharacters * size / totalCharacters));
+      const share = Math.max(1500, Math.floor(maxCharacters * sizes[index] / totalCharacters));
       let used = 0;
       let keep = 0;
       for (let cursor = lines.length - 1; cursor >= 0 && used + lines[cursor].length + 1 <= share; cursor -= 1) { used += lines[cursor].length + 1; keep += 1; }
@@ -278,7 +300,7 @@ export async function readServerActivity(service, {
     window: { since: new Date(window.start).toISOString(), until: new Date(window.end).toISOString(), sinceUnix: Math.floor(window.start / 1000), untilUnix: Math.floor(window.end / 1000), timeZone },
     lineFormat: '[local time|Unix seconds] author (reply to X): message; " / " joins consecutive messages from one author',
     ...(terms.length ? { keywords } : {}),
-    messageCount, activeChannels: channelsOut.length, channelsChecked: candidates.length, channelsInServer: byId.size,
+    messageCount, activeChannels: channelsOut.length, channelsChecked: known.length + discovered.length, channelsInServer: byId.size,
     ...(botMessagesSkipped ? { botMessagesSkipped } : {}), ...(archivedThreadErrors ? { archivedThreadErrors } : {}), ...(maxLength < 400 ? { messagesShortenedTo: maxLength } : {}),
     channels: channelsOut, skipped, partial, elapsedMs: now() - startedAt, untrustedContent: true,
     nextStep: partial
