@@ -17,6 +17,13 @@ import { join } from 'node:path';
 
 const uncertainDelivery = (entries, messageId) => entries.some((entry) => entry.triggerMessageId === messageId && ['unknown', 'pending'].includes(entry.status));
 
+// Live web search can open arbitrary pages, which would bypass the guard that stops link reading after private app data is read, so the
+// owner DM uses OpenAI's search cache when connected apps are on; server conversations have no app access and search live.
+export function webSearchMode(settings = {}, { directMessages = false } = {}) {
+  if (settings.webSearch && settings.webSearch !== 'auto') return settings.webSearch;
+  return directMessages && settings.apps !== false ? 'cached' : 'live';
+}
+
 export async function createChannelRuntime(service, configuration, bot, { warm = true, scheduleReply, onStatus = () => {}, memoryRoot, settingsStore = createNovaSettings(memoryRoot ? { filename: join(memoryRoot, 'nova.json') } : {}), deliveryRoot, progressComponents, messageComponents, onControl, responderFactory = createCodexResponder } = {}) {
   const account = service.accountById(configuration.accountId);
   const client = account.client;
@@ -36,7 +43,7 @@ export async function createChannelRuntime(service, configuration, bot, { warm =
   try {
     const requests = new Map();
     const readTools = createDiscordReadTools(service, scope, { ...settings, connectedApps });
-    generateReply = responderFactory({ command: preferences.codexCommand, model: preferences.model, reasoningEffort: preferences.reasoningEffort, serviceTier: preferences.serviceTier, timeoutMs: preferences.timeoutMs, toolTimeoutMs: preferences.toolTimeoutMs, maxToolCalls: preferences.maxToolCalls, scope, readTools, requireSubscription: responderFactory === createCodexResponder });
+    generateReply = responderFactory({ command: preferences.codexCommand, model: preferences.model, reasoningEffort: preferences.reasoningEffort, serviceTier: preferences.serviceTier, timeoutMs: preferences.timeoutMs, toolTimeoutMs: preferences.toolTimeoutMs, maxToolCalls: preferences.maxToolCalls, webSearch: webSearchMode(settings, configuration), scope, readTools, requireSubscription: responderFactory === createCodexResponder });
     if (warm) await generateReply.warmup();
     const transcribe = createVoiceTranscriber(settings.voice);
     const conversationContext = createConversationContext(client, { bot, guild, channel, directMessages: configuration.directMessages, gifUrls: configuration.gifUrls }, { ...settings, transcribe: settings.voice.backend === 'disabled' ? undefined : transcribe });

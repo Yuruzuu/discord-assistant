@@ -16,7 +16,8 @@ function conversationIdentity(context) {
   return JSON.stringify({ channelId: context.channelId || null, guildId: context.guildId || null, directMessages: Boolean(context.directMessages) });
 }
 
-export function createConversationReply({ command = process.env.CODEX_CLI_PATH || 'codex', model = replyDefaults.model, reasoningEffort = replyDefaults.reasoningEffort, serviceTier = replyDefaults.serviceTier, timeoutMs = 120000, toolTimeoutMs = 30000, maxToolCalls = 24, maxRepeatedFailures = 3, requireSubscription = false, spawnImpl, scope, readTools } = {}) {
+export function createConversationReply({ command = process.env.CODEX_CLI_PATH || 'codex', model = replyDefaults.model, reasoningEffort = replyDefaults.reasoningEffort, serviceTier = replyDefaults.serviceTier, timeoutMs = 120000, toolTimeoutMs = 30000, maxToolCalls = 24, maxRepeatedFailures = 3, requireSubscription = false, spawnImpl, scope, readTools, webSearch = 'disabled' } = {}) {
+  if (!['disabled', 'cached', 'indexed', 'live'].includes(webSearch)) throw new Error('webSearch must be disabled, cached, indexed or live');
   for (const value of [timeoutMs, toolTimeoutMs]) if (!Number.isInteger(value) || value < 1 || value > 900000) throw new Error('Conversation deadlines must be bounded positive milliseconds');
   if (!Number.isInteger(maxToolCalls) || maxToolCalls < 1 || maxToolCalls > 100 || !Number.isInteger(maxRepeatedFailures) || maxRepeatedFailures < 1 || maxRepeatedFailures > 10) throw new Error('Conversation tool budgets must be bounded positive counts');
   let server;
@@ -48,6 +49,12 @@ export function createConversationReply({ command = process.env.CODEX_CLI_PATH |
     if (!active || (active.turnId && parameters.turnId && parameters.turnId !== active.turnId)) return;
     if (method === 'item/started' && parameters.item.type === 'agentMessage') {
       active.phases.set(parameters.item.id, parameters.item.phase || 'final_answer');
+    } else if ((method === 'item/started' || method === 'item/completed') && parameters.item.type === 'webSearch') {
+      // Codex runs web searches itself; report them like tool activity so the owner sees what was searched or opened.
+      const { id, query, action } = parameters.item;
+      const turn = active;
+      void Promise.resolve(turn.onProgress?.({ stage: method === 'item/started' ? 'started' : 'completed', toolName: 'web_search', callId: id,
+        arguments: { query: query || action?.query || action?.queries?.[0] || '', url: action?.url || '' } }, turn.signal)).catch(() => {});
     } else if (method === 'item/agentMessage/delta') {
       if (active.phases.get(parameters.itemId) === 'commentary') return;
       active.itemId ||= parameters.itemId;
@@ -135,7 +142,7 @@ export function createConversationReply({ command = process.env.CODEX_CLI_PATH |
     const result = await server.request('thread/start', {
       ephemeral: true, model, serviceTier, cwd: directory, approvalPolicy: 'never', permissions: permissionProfile,
       environments: [], selectedCapabilityRoots: [], baseInstructions: loadInstructions('nova', { ownerUserId: directMessageOwnerId }), dynamicTools: readTools?.definitions || [],
-      config: { mcp_servers: disabledServers, web_search: 'disabled', notify: [], model_reasoning_effort: reasoningEffort,
+      config: { mcp_servers: disabledServers, web_search: webSearch, notify: [], model_reasoning_effort: reasoningEffort,
         permissions: { [permissionProfile]: { filesystem: { ':root': 'deny', [directory]: 'read' }, network: { enabled: false } } },
         features: { shell_tool: false, plugins: false, hooks: false, memories: false, js_repl: false, apps: false } },
     });

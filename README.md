@@ -497,9 +497,18 @@ secrets and paths escaping the approved roots are rejected. Example configuratio
   "web": true,
   "media": true,
   "playbooks": true,
-  "apps": true
+  "apps": true,
+  "webSearch": "auto"
 }
 ```
+
+Nova can search the web with Codex's built-in web search, and each search
+appears in the progress log ("I've searched the web for "…""). With
+`"webSearch": "auto"` (the default), server conversations search live. The
+owner DM uses OpenAI's search cache while connected apps are enabled, because
+live search can open arbitrary pages and would bypass the rule that blocks
+link reading after private app data has been read. Set `"live"`, `"cached"`,
+`"indexed"` or `"disabled"` to choose a mode yourself.
 
 Owner DMs can also use the apps connected to your Codex/ChatGPT account (for
 example Gmail, Google Drive, GitHub and Linear) through `apps_list_tools` and

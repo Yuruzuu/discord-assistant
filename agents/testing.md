@@ -43,7 +43,7 @@ The owner ID for fixtures is `directMessageOwnerId` from
 | Sending | `messaging`, `replies-users`, `reactions`, `forwarding`, `channel-messages` |
 | MCP surface and packaging | `stdio`, `plugin` |
 | Nova engine and replies | `proactive-engine`, `reply-stream`, `reply-sender`, `reply-controls`, `discord-experience`, `proactive-progress`, `typing` |
-| Nova Codex integration | `app-server`, `codex-responder`, `codex-runtime-controls` |
+| Nova Codex integration | `app-server`, `codex-responder`, `codex-runtime-controls`, `web-search`, `instructions` |
 | Nova tools and context | `proactive-read-tools`, `proactive-context-tools`, `connected-apps`, `voice-transcriber` |
 | Nova runtime and listeners | `channel-runtime-integration`, `direct-messages`, `server-mentions`, `gateway-recovery` |
 | Nova control plane | `proactive-controller`, `proactive-supervisor`, `nova-controls`, `state-writer` |

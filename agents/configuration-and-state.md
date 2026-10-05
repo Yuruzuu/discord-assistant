@@ -32,7 +32,7 @@ overrides persist in `nova.json`.
 | Path | Owner module | Contents |
 | --- | --- | --- |
 | `$CONF/.env` | plugin `start.mjs` | Tokens and account env (user-managed) |
-| `$CONF/nova.json` | `nova-settings.mjs` | `projectRoots`, `voice`, `conversations["<account>:<channel>"]` overrides (model, effort, tier, timeouts, paused), `web` / `media` / `playbooks` / `apps` toggles (`apps` = owner-DM connected apps, default on), `timeZone` (IANA zone for "today" and transcripts; default host zone) |
+| `$CONF/nova.json` | `nova-settings.mjs` | `projectRoots`, `voice`, `conversations["<account>:<channel>"]` overrides (model, effort, tier, timeouts, paused), `web` / `media` / `playbooks` / `apps` toggles (`apps` = owner-DM connected apps, default on), `timeZone` (IANA zone for "today" and transcripts; default host zone), `webSearch` (`auto` (default) / `live` / `cached` / `indexed` / `disabled`) |
 | `$DATA/proactive/<account>-<channel>.json` | `controller.mjs`, `daemon.mjs` | Listener configuration: `listenerId`, `controlToken`, `controlUrl`, `pid`, mode, model, pacing (0600) |
 | `$DATA/proactive/<account>-dm-<owner>.json` / `<account>-servers.json` | same | DM / all-servers listener configuration |
 | `…/<target>.status.json` | `daemon.mjs` (via `state-writer`), `supervisor.mjs` | Live status snapshot and statistics |

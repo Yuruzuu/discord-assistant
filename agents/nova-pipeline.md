@@ -64,6 +64,9 @@ How one owner message becomes Nova's reply. All modules are in `src/proactive/`.
   `readTools.call(name, args)` and limited by `maxToolCalls` (24),
   `toolTimeoutMs` (30 s), and repeated-failure limits. The whole turn has
   `timeoutMs` (120 s, owner-adjustable with `nova budget`).
+- Codex's built-in web search is enabled per `webSearchMode` (`cached` in the
+  owner DM with apps, `live` otherwise). Its `webSearch` thread items are
+  forwarded to the progress log as `web_search` activity.
 - In owner DMs, the model can also call `apps_list_tools` / `apps_call_tool`.
   The host forwards these to a separate hidden Codex thread with apps enabled
   (`connected-apps.mjs`), using read-only tools only. Reading app data blocks
