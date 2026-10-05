@@ -106,7 +106,7 @@ that file; `tokenEnv` is an environment variable name, not a token.
 | `discord_read` | Read a message/channel URL or IDs, auto-select the bot with access, and inline image attachments. |
 | `discord_search_messages` | Search indexed server messages and return up to 250 matches with links and continuation arguments. |
 | `discord_read_activity` | Read everything posted in a server (or chosen channels and their threads) today, yesterday, in the last N hours or a since/until window up to 7 days. Reads channel history directly, so it is complete and fresher than search; idle channels are skipped, recently archived threads are included, and results are compact per-channel transcripts with participants and an optional keyword filter. |
-| `discord_search_batch` | Run up to 10 keyword/channel/author searches at once (three at a time, one small page each) and get deduplicated, compact hits with per-search continuations. |
+| `discord_search_batch` | Run up to 10 keyword/channel/author searches in one call (one small page each) and get deduplicated, compact hits with per-search continuations. |
 | `discord_find_members` | Resolve server usernames and nicknames to author IDs. |
 | `discord_research_topic` | Collect bounded topic matches, nearby context and source links. |
 | `web_read_link` | Read public HTTP(S) text with private-address and redirect controls. |

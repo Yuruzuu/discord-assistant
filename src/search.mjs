@@ -56,7 +56,8 @@ export async function searchMessages(service, {
     for (const thread of result.threads || []) threads.set(thread.id, shapeChannel({ ...thread, guild_id: thread.guild_id || guildId }));
     nextOffset += requested;
   };
-  // Until a page reports the total, pages go one at a time; after that the next few are known up front and fetched together.
+  // Until a page reports the total, pages go one at a time; after that the next few are planned up front. DiscordApiClient still sends
+  // requests on one search route sequentially to respect its rate-limit bucket, so this saves planning, not network round trips.
   const planPages = () => {
     const pages = [];
     let pageOffset = nextOffset;
@@ -90,7 +91,8 @@ export async function searchMessages(service, {
   };
 }
 
-// Runs several keyword/filter variants in one call: small pages, bounded concurrency, one routed account, and hits merged across searches.
+// Runs several keyword/filter variants in one call: small pages, one routed account, and hits merged across searches. The searches share the
+// guild's search route, which the client sends one at a time, so the win is one tool call and small pages rather than parallel requests.
 export async function searchMessagesBatch(service, {
   guildId, searches, channelIds = [], authorIds = [], beforeId, afterId, sortOrder = 'desc', limitPerSearch = 25, includeNsfw = false, accountId,
 }, { signal } = {}) {

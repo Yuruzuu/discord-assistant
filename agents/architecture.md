@@ -84,7 +84,11 @@ shapes.mjs  raw Discord JSON → stable output (shapeMessage, shapeChannel, …)
   turns a URL or IDs into `{guildId, channelId, messageId}`.
 - **`DiscordApiClient`**: all HTTP goes through `requestJson`/`scheduleRequest`,
   which honour Discord bucket headers and global cooldowns. Failed sends are
-  never retried after a connection error.
+  never retried after a connection error. Requests are queued per route, meaning
+  the method plus the path with its channel or guild ID. Different channels
+  therefore run in parallel, up to the per-bot limit of 10, which is why history
+  reads scale. Repeated calls to the same route (for example every page of one
+  guild's search) run one at a time, however many are issued.
 - **Shared read tools.** Several read tools have one schema and implementation
   shared by MCP and Nova (`read-tool-registry.mjs`). MCP gets the "trusted local"
   field set. Nova's worker gets a narrower set (`readToolFields(name, scope)`).
@@ -122,7 +126,7 @@ See [nova-pipeline.md](nova-pipeline.md) for the detailed lifecycle.
 | `tool-results.mjs` | `register` (wraps handlers, so errors become `failure()`), `success`, annotations |
 | `messaging.mjs` | `sendMessage`, `sendResolvedMessage`, `sendMessageBatch`, `forwardMessages`, `forwardResolvedMessage`, `listExpressions` |
 | `reactions.mjs` | Emoji normalisation and `addReaction` |
-| `search.mjs` | Paged guild message search (≤ 250 results; pages after the first fetched three at a time) and `searchMessagesBatch` |
+| `search.mjs` | Paged guild message search (≤ 250 results; requests on one search route are sequential, per the client's rate-limit queue) and `searchMessagesBatch` |
 | `activity.mjs` | `readServerActivity`: date-window channel-history reader for recent activity and day summaries, plus time-zone and day-boundary helpers |
 | `message-browser.mjs` | Context and browse windows with older/newer cursors |
 | `users.mjs` | Profile and member info |
