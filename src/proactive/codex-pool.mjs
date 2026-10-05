@@ -26,7 +26,7 @@ export async function acquireCodexServer({ command, env, spawnImpl, onNotificati
           else for (const owner of entry.owners) owner.onFailure(error);
         },
       });
-      await entry.server.request('initialize', { clientInfo: { name: 'nova-discord', title: 'Nova Discord', version: '2.9.0' }, capabilities: { experimentalApi: true } });
+      await entry.server.request('initialize', { clientInfo: { name: 'nova-discord', title: 'Nova Discord', version: '2.10.0' }, capabilities: { experimentalApi: true } });
       entry.server.notify('initialized');
     })();
   }

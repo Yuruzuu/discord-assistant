@@ -3,7 +3,7 @@ import test from 'node:test';
 import { cp, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, relative } from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 
@@ -37,7 +37,11 @@ test('installed plugin runs from an isolated folder without repository dependenc
     await cp(new URL('../plugins/discord', import.meta.url), pluginRoot, { recursive: true });
     await writeFile(credentialsFile, 'DISCORD_TOKEN=mock-plugin-token\n', { mode: 0o600 });
     const files = await pluginFiles(pluginRoot);
-    assert.ok(files.every((path) => !path.includes('node_modules') && !/(?:^|\/)\.env(?:\.|$)/.test(path)));
+    const allowedNativeDependency = /^runtime\/node_modules\/@napi-rs\/canvas(?:-(?:darwin|linux|win32|android)-[a-z0-9-]+)?\//;
+    assert.ok(files.every((path) => (!path.includes('node_modules') || allowedNativeDependency.test(relative(pluginRoot, path).replaceAll('\\', '/'))) && !/(?:^|\/)\.env(?:\.|$)/.test(path)));
+    assert.ok(files.some((path) => path.endsWith('pdf-worker.mjs')));
+    assert.ok(files.some((path) => relative(pluginRoot, path).replaceAll('\\', '/').startsWith('runtime/pdf-assets/standard_fonts/')));
+    assert.ok(files.some((path) => allowedNativeDependency.test(relative(pluginRoot, path).replaceAll('\\', '/')) && path.endsWith('.node')));
     const daemon = spawnSync(process.execPath, [join(pluginRoot, 'runtime', 'proactive.cjs')], {
       cwd: temporary, env: isolatedEnvironment(credentialsFile), encoding: 'utf8',
     });
@@ -53,7 +57,7 @@ test('installed plugin runs from an isolated folder without repository dependenc
       stderr: 'pipe',
     }));
     const tools = (await client.listTools()).tools;
-    assert.equal(tools.length, 36);
+    assert.equal(tools.length, 37);
     assert.ok(tools.some((tool) => tool.name === 'discord_read'));
     assert.ok(tools.some((tool) => tool.name === 'discord_send_message' && tool.annotations.readOnlyHint === false));
     assert.ok(tools.some((tool) => tool.name === 'discord_list_expressions'));

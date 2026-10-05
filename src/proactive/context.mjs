@@ -2,6 +2,7 @@ import { shapeEmoji, shapeMessage, shapeSticker } from '../shapes.mjs';
 import { directMessageOwnerId } from './target.mjs';
 import { resolveTimeZone } from '../activity.mjs';
 import { readContextImages, transcribeVoiceNotes, reportPreparation } from './context-media.mjs';
+import { readContextPdfs } from './pdf-reader.mjs';
 
 const gifHosts = new Set(['cdn.discordapp.com', 'media.tenor.com', 'tenor.com', 'media.giphy.com', 'giphy.com']);
 
@@ -9,6 +10,7 @@ export function createConversationContext(client, { bot, guild, channel, directM
   let expressions;
   let expressionTime = 0;
   const transcriptCache = new Map();
+  const pdfCache = new Map();
   const ownerOrBot = (message) => [directMessageOwnerId, bot.id].includes(message.author?.id);
 
   async function getExpressions() {
@@ -48,9 +50,10 @@ export function createConversationContext(client, { bot, guild, channel, directM
     const snapshots = relevant.flatMap((message) => (message.message_snapshots || []).slice(0, 5).map(({ message: snapshot }) => ({ id: message.id, snapshot })));
     const forwardedMedia = snapshots.map(({ id, snapshot }) => ({ id, attachments: snapshot?.attachments || [], untrustedContent: true }));
     const mediaSources = [...relevant, ...forwardedMedia];
-    const [media, voice] = await Promise.all([
+    const [media, voice, pdfs] = await Promise.all([
       options.media === false ? { images: [], warnings: [] } : readContextImages(client, mediaSources, options.media, signal, preparation),
       transcribeVoiceNotes(mediaSources, options.transcribe, signal, { ...preparation, cache: transcriptCache }),
+      options.pdf === false ? { documents: [], images: [], warnings: [] } : readContextPdfs(mediaSources, signal, { ...preparation, cache: pdfCache, readPdf: options.readPdf }),
     ]);
     const forwardedMessages = snapshots.map(({ id, snapshot }) => ({ sourceMessageId: id, content: String(snapshot?.content || '').slice(0, 10000), untrustedContent: true }));
     const gifs = new Set(gifUrls);
@@ -71,8 +74,8 @@ export function createConversationContext(client, { bot, guild, channel, directM
       ...(directMessages ? { directMessages: true, ownerUserId: directMessageOwnerId } : {}),
       expressions, allowedGifUrls: [...gifs].slice(0, 20),
       replyMessages: replyMessages.map((message) => ({ ...shapeMessage({ ...message, channel_id: channel.id, guild_id: guild?.id }), untrustedContent: true })),
-      forwardedMessages, images: media.images, voiceTranscripts: voice.transcripts,
-      mediaWarnings: [...mediaWarnings, ...media.warnings, ...voice.warnings],
+      forwardedMessages, images: [...media.images, ...pdfs.images], voiceTranscripts: voice.transcripts, pdfDocuments: pdfs.documents,
+      mediaWarnings: [...mediaWarnings, ...media.warnings, ...voice.warnings, ...pdfs.warnings],
       recentMessages: [...messages].reverse().map((message) => shapeMessage({ ...message, guild_id: guild?.id })),
     };
   };

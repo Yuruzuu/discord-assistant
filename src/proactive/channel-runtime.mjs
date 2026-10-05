@@ -12,8 +12,9 @@ import { createConnectedApps } from './connected-apps.mjs';
 import { createVoiceTranscriber } from './voice-transcriber.mjs';
 import { createNovaSettings } from './nova-settings.mjs';
 import { createDeliveryJournal } from './delivery-journal.mjs';
-import { parseNovaCommand } from './controls.mjs';
+import { parseNovaCommand, renderControlResult } from './controls.mjs';
 import { join } from 'node:path';
+import { createOwnerCapabilities } from './owner-capabilities.mjs';
 
 const uncertainDelivery = (entries, messageId) => entries.some((entry) => entry.triggerMessageId === messageId && ['unknown', 'pending'].includes(entry.status));
 
@@ -24,7 +25,7 @@ export function webSearchMode(settings = {}, { directMessages = false } = {}) {
   return directMessages && settings.apps !== false ? 'cached' : 'live';
 }
 
-export async function createChannelRuntime(service, configuration, bot, { warm = true, scheduleReply, onStatus = () => {}, memoryRoot, settingsStore = createNovaSettings(memoryRoot ? { filename: join(memoryRoot, 'nova.json') } : {}), deliveryRoot, progressComponents, messageComponents, onControl, responderFactory = createCodexResponder } = {}) {
+export async function createChannelRuntime(service, configuration, bot, { warm = true, scheduleReply, onStatus = () => {}, memoryRoot, settingsStore = createNovaSettings(memoryRoot ? { filename: join(memoryRoot, 'nova.json') } : {}), deliveryRoot, progressComponents, messageComponents, actionComponents, onControl, responderFactory = createCodexResponder } = {}) {
   const account = service.accountById(configuration.accountId);
   const client = account.client;
   const [guild, channel] = await Promise.all([
@@ -39,10 +40,12 @@ export async function createChannelRuntime(service, configuration, bot, { warm =
   await memory.load();
   const journal = await createDeliveryJournal({ accountId: account.id, channelId: channel.id, ...(deliveryRoot || memoryRoot ? { root: deliveryRoot || join(memoryRoot, 'delivery') } : {}) });
   let generateReply;
+  let ownerCapabilities;
   const connectedApps = configuration.directMessages && settings.apps !== false ? createConnectedApps({ command: preferences.codexCommand || undefined }) : null;
   try {
+    if (configuration.directMessages) ownerCapabilities = await createOwnerCapabilities({ service, accountId: account.id, channelId: channel.id, settings, connectedApps, actionComponents, root: memoryRoot, onError: (error) => onStatus({ ownerCapabilityError: String(error.message).slice(0, 200) }) });
     const requests = new Map();
-    const readTools = createDiscordReadTools(service, scope, { ...settings, connectedApps });
+    const readTools = createDiscordReadTools(service, scope, { ...settings, connectedApps, ownerActions: ownerCapabilities?.actions, schedules: ownerCapabilities?.schedules, handoffs: ownerCapabilities?.handoffs });
     generateReply = responderFactory({ command: preferences.codexCommand, model: preferences.model, reasoningEffort: preferences.reasoningEffort, serviceTier: preferences.serviceTier, timeoutMs: preferences.timeoutMs, toolTimeoutMs: preferences.toolTimeoutMs, maxToolCalls: preferences.maxToolCalls, webSearch: webSearchMode(settings, configuration), scope, readTools, requireSubscription: responderFactory === createCodexResponder });
     if (warm) await generateReply.warmup();
     const transcribe = createVoiceTranscriber(settings.voice);
@@ -81,6 +84,10 @@ export async function createChannelRuntime(service, configuration, bot, { warm =
 
     async function control(request) {
       if (request.userId !== directMessageOwnerId) throw new Error('Only the owner can control Nova');
+      if (['approval', 'approvals', 'task-approval', 'reminder', 'alert', 'handoff', 'tasks'].includes(request.action)) {
+        if (!ownerCapabilities) throw new Error('Use the owner DM for approvals, reminders, alerts and task handoffs');
+        return ownerCapabilities.control(request);
+      }
       if (request.action === 'voice') return transcribe.status();
       if (request.action === 'projects') return { projects: configuration.directMessages ? settings.projectRoots.map(({ id, name }) => ({ id, name: name || id })) : [], dmOnly: true };
       if (request.action === 'remember') {
@@ -122,7 +129,11 @@ export async function createChannelRuntime(service, configuration, bot, { warm =
     async function receive(message) {
       if (!acceptsListenerMessage(scope, message)) return false;
       const command = !message.hostProvenance && parseNovaCommand(message.content, bot.id);
-      if (command) { await control({ ...command, userId: message.author.id }); return true; }
+      if (command) {
+        const result = await control({ ...command, userId: message.author.id, channelId: channel.id });
+        if (['approval', 'approvals', 'task-approval', 'reminder', 'alert', 'handoff', 'tasks'].includes(command.action)) await client.sendMessage(channel.id, { content: renderControlResult(result), allowed_mentions: { parse: [] }, nonce: `ctl${message.id}`, enforce_nonce: true });
+        return true;
+      }
       const claim = await journal.claimIngress({ ...message, authorId: message.author.id });
       if (!claim.claimed) return false;
       try {
@@ -161,6 +172,6 @@ export async function createChannelRuntime(service, configuration, bot, { warm =
       } finally { requests.delete(intro.id); signal?.removeEventListener('abort', cancel); }
     }
 
-    return { receive, status, control, recover, request, close: async () => { engine.stop(); await generateReply.close(); await engine.idle(); await connectedApps?.close(); await journal.close(); } };
-  } catch (error) { await generateReply?.close().catch(() => {}); await connectedApps?.close().catch(() => {}); await journal.close(); throw error; }
+    return { receive, status, control, recover, request, close: async () => { engine.stop(); await generateReply.close(); await engine.idle(); await ownerCapabilities?.close(); await connectedApps?.close(); await journal.close(); } };
+  } catch (error) { await generateReply?.close().catch(() => {}); await ownerCapabilities?.close().catch(() => {}); await connectedApps?.close().catch(() => {}); await journal.close(); throw error; }
 }

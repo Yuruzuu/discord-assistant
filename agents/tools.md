@@ -14,7 +14,7 @@ becomes an `isError` result with structured `error` fields: `nonce` and
 for batches. Tools are read-only by default (`readOnlyHint: true`), and write
 tools spread `writeAnnotations`.
 
-## MCP tools (36)
+## MCP tools (37)
 
 R = read-only, W = write. The **Schema** column says where the input schema is
 defined.
@@ -33,6 +33,7 @@ defined.
 | `discord_message_context` | R | `message-browser.mjs` (anchor required) | `read-tool-registry` |
 | `discord_browse_messages` | R | `message-browser.mjs` `browseMessages` | `read-tool-registry` |
 | `discord_fetch_attachment` | R | `service.fetchAttachment` (Discord CDN image hosts only) | `server.mjs` |
+| `discord_read_pdf` | R | `read-tools` scoped attachment resolution, `pdf-reader` isolated extraction | `read-tools` |
 | `discord_check_access` | R | `service.checkAccess` | `server.mjs` |
 | `discord_list_expressions` | R | `messaging.listExpressions` | `server.mjs` |
 | `discord_user_info` | R | `users.getUserInfo` | `read-tool-registry` |
@@ -85,7 +86,10 @@ exposes the full field sets.
 | `discord_message_context`, `discord_browse_messages` | channels in own guild | any guild channel + this owner DM |
 | `web_read_link` | if `settings.web !== false` | same |
 | `project_list` / `project_search` / `project_read_file` | never | if `projectRoots` configured |
-| `apps_list_tools` / `apps_call_tool` | never | if `nova.json` `apps !== false` (default on). Read-only connected-app tools only |
+| `apps_list_tools` / `apps_call_tool` | never | read-only connected-app calls; `access: action` discovers separately approved actions |
+| `apps_prepare_action` | never | exact immutable write proposal, separate owner approval |
+| `nova_list_schedules` / `nova_prepare_reminder` / `nova_prepare_alert` | never | inspect schedules or prepare separately approved creations |
+| `nova_handoff_catalog` / `nova_list_tasks` / `nova_prepare_handoff` | never | T3 project/provider catalog, own task status, separately approved task launch |
 | `read_tool_result` | always | always |
 
 Worker schemas are narrower than MCP schemas (`readToolFields(name, scope)`): no

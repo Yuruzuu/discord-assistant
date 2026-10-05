@@ -5,6 +5,8 @@ import { join } from 'node:path';
 import { setTimeout as wait } from 'node:timers/promises';
 import { acquireCodexServer } from './codex-pool.mjs';
 import { responderEnvironment } from './worker-environment.mjs';
+import { z } from 'zod/v4';
+import { isDeepStrictEqual } from 'node:util';
 
 const appsServer = 'codex_apps';
 const blockedSegments = new Set(['paypal', 'pay', 'payment', 'payments', 'payout', 'payouts', 'invoice', 'invoices', 'billing', 'checkout', 'wallet', 'bank', 'stripe', 'refund', 'refunds', 'transfer', 'transfers', 'purchase', 'purchases', 'subscription', 'subscriptions']);
@@ -14,6 +16,11 @@ export function isAllowedAppTool(name, annotations) {
   if (typeof name !== 'string' || !/^[a-z0-9_]+\.[A-Za-z0-9_.-]+$/.test(name)) return false;
   if (annotations?.readOnlyHint !== true || annotations.destructiveHint === true) return false;
   return !name.toLowerCase().split(/[._-]+/).some((segment) => blockedSegments.has(segment));
+}
+
+export function isAllowedAppAction(name, annotations) {
+  return typeof name === 'string' && /^[a-z0-9_]+\.[A-Za-z0-9_.-]+$/.test(name) && annotations?.readOnlyHint === false
+    && !name.toLowerCase().split(/[._-]+/).some((segment) => blockedSegments.has(segment));
 }
 
 // Connected apps run on a hidden Codex thread that never starts a model turn; the host calls tools on it directly, so the reply model never gets native app access.
@@ -71,8 +78,8 @@ export function createConnectedApps({ command = process.env.CODEX_CLI_PATH || 'c
       if (entry && Object.keys(entry.tools || {}).length) {
         const allowed = new Map();
         for (const [name, tool] of Object.entries(entry.tools)) {
-          if (!isAllowedAppTool(name, tool.annotations)) continue;
-          allowed.set(name, { name, app: name.split('.')[0], title: tool.title || tool.annotations?.title || null, description: String(tool.description || '').slice(0, 400), inputSchema: tool.inputSchema || { type: 'object' } });
+          if (!isAllowedAppTool(name, tool.annotations) && !isAllowedAppAction(name, tool.annotations)) continue;
+          allowed.set(name, { name, app: name.split('.')[0], title: tool.title || tool.annotations?.title || null, description: String(tool.description || '').slice(0, 400), inputSchema: tool.inputSchema || { type: 'object' }, annotations: tool.annotations, access: isAllowedAppTool(name, tool.annotations) ? 'read' : 'action' });
         }
         catalog = { tools: allowed, loadedAt: now() };
         return allowed;
@@ -83,8 +90,8 @@ export function createConnectedApps({ command = process.env.CODEX_CLI_PATH || 'c
     }
   }
 
-  async function list({ app, query, limit = 40 } = {}, signal) {
-    const available = [...(await tools(signal)).values()];
+  async function list({ app, query, limit = 40, access = 'read' } = {}, signal) {
+    const available = [...(await tools(signal)).values()].filter((tool) => access === 'all' || tool.access === access);
     const apps = {};
     for (const tool of available) apps[tool.app] = (apps[tool.app] || 0) + 1;
     const terms = String(query || '').toLowerCase().split(/\s+/).filter(Boolean);
@@ -94,7 +101,28 @@ export function createConnectedApps({ command = process.env.CODEX_CLI_PATH || 'c
 
   async function call({ tool, arguments: args = {} }, signal) {
     const available = await tools(signal);
-    if (!available.has(tool)) throw new Error('That tool is not an approved read-only connected-app tool. Use apps_list_tools to find one.');
+    if (available.get(tool)?.access !== 'read') throw new Error('That tool is not an approved read-only connected-app tool. Use apps_list_tools to find one.');
+    return execute(tool, args, signal);
+  }
+
+  async function validateAction({ tool, arguments: args = {} }, signal) {
+    const entry = (await tools(signal)).get(tool);
+    if (entry?.access !== 'action') throw new Error('Choose a non-payment action from apps_list_tools with access: action.');
+    let parsed;
+    try { parsed = z.fromJSONSchema(entry.inputSchema).parse(args); }
+    catch { throw new Error('Action arguments do not match the connected app schema.'); }
+    return { tool, arguments: parsed, app: entry.app, title: entry.title || tool, destructive: entry.annotations.destructiveHint === true };
+  }
+
+  // This method is host-only. The model can prepare a proposal, but cannot call it or mint an approval.
+  async function callApproved(action, signal) {
+    catalog = null;
+    const validated = await validateAction(action, signal);
+    if (!isDeepStrictEqual(validated.arguments, action.arguments) || (action.destructive !== undefined && validated.destructive !== action.destructive)) throw Object.assign(new Error('The connected app schema or action changed; prepare a new proposal'), { approvalRejected: true });
+    return execute(validated.tool, validated.arguments, signal);
+  }
+
+  async function execute(tool, args, signal) {
     signal?.throwIfAborted();
     const result = await server.request('mcpServer/tool/call', { server: appsServer, threadId, tool, arguments: args }, callTimeoutMs);
     signal?.throwIfAborted();
@@ -109,5 +137,5 @@ export function createConnectedApps({ command = process.env.CODEX_CLI_PATH || 'c
 
   async function close() { closed = true; await reset(); }
 
-  return { list, call, close };
+  return { list, call, validateAction, callApproved, close };
 }

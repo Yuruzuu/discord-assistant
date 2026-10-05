@@ -15,7 +15,7 @@ test('MCP derives shared read schemas while preserving trusted optional filters 
   await server.connect(serverTransport); await client.connect(clientTransport);
   try {
     const { tools } = await client.listTools();
-    assert.equal(tools.length, 36); assert.equal(new Set(tools.map((tool) => tool.name)).size, tools.length);
+    assert.equal(tools.length, 37); assert.equal(new Set(tools.map((tool) => tool.name)).size, tools.length);
     for (const name of ['discord_read', 'discord_send_message', 'discord_read_messages', 'discord_find_members', 'web_read_link', 'discord_research_topic', 'read_tool_result']) assert.ok(tools.some((tool) => tool.name === name), name);
     const search = tools.find((tool) => tool.name === 'discord_search_messages');
     for (const field of ['accountId', 'repliedToMessageIds', 'embedTypes', 'has', 'includeNsfw', 'sortBy']) assert.ok(search.inputSchema.properties[field], field);

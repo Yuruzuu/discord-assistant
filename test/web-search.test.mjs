@@ -44,11 +44,14 @@ test('web searches and opened pages read naturally in the progress log', async (
   const lines = [];
   const progress = createProgressReporter({ intervalMs: 0, send: async (content) => { lines.push(content); return { sentMessages: [{ message: { id: 'message' } }] }; }, edit: async (_, content) => { lines.push(content); } });
   await progress.receive({ stage: 'started', toolName: 'web_search', callId: 'a', arguments: { query: '', url: '' } });
-  assert.equal(lines.at(-1), 'I’m searching the web.', 'Codex sends the query only when the search finishes');
+  assert.equal(lines.at(-1), 'I’m searching the web.\n```\nweb_search({"query":""})\n```', 'Codex sends the query only when the search finishes');
   await progress.receive({ stage: 'completed', toolName: 'web_search', callId: 'a', arguments: { query: 'fate buff <@&123> **news**', url: '' } });
+  assert.equal(lines.at(-1), 'I’ve searched the web for "fate buff &123 news".');
   await progress.receive({ stage: 'started', toolName: 'web_search', callId: 'b', arguments: { query: '', url: 'https://user:token@docs.example.com/private?key=1' } });
-  assert.equal(lines.at(-1), 'I’ve searched the web for "fate buff &123 news".\nI’m opening docs.example.com.');
+  assert.equal(lines.at(-1), 'I’ve searched the web for "fate buff &123 news".\nI’m opening docs.example.com.\n```\nweb_search({"query":"","url":"docs.example.com"})\n```');
+  assert.ok(!/user:|token|private|key=1/.test(lines.join('\n')), 'URL credentials, paths and query parameters remain private');
   await progress.receive({ stage: 'completed', toolName: 'web_search', callId: 'b', arguments: { query: '', url: 'https://user:token@docs.example.com/private?key=1' } });
   await progress.finish();
   assert.equal(lines.at(-1), 'I searched the web for "fate buff &123 news", and opened docs.example.com.');
+  assert.ok(!lines.at(-1).includes('```'));
 });

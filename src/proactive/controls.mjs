@@ -9,6 +9,16 @@ export function parseNovaCommand(content, botUserId) {
   if (!match) return null;
   const action = match[1].toLowerCase();
   const value = (match[2] || '').trim();
+  if (['approve', 'decline'].includes(action)) return { action: 'approval', id: value, decision: action };
+  if (action === 'approvals') return { action: 'approvals' };
+  if (['reminder', 'alert', 'handoff', 'tasks'].includes(action)) {
+    const [operation = 'list', ...rest] = value.split(/\s+/);
+    if (['add', 'start', 'steer', 'resolve', 'update'].includes(operation)) {
+      try { return { action, operation, configuration: JSON.parse(rest.join(' ')) }; }
+      catch { return { action: 'help', value: `Use nova ${action} ${operation} {"...":"..."}, or ask Nova to prepare it in your DM.` }; }
+    }
+    return { action, operation, id: rest[0] };
+  }
   if (simpleActions.includes(action)) return value ? null : { action };
   if (['model', 'effort', 'fast', 'steer', 'research', 'budget'].includes(action)) return { action, value };
   if (action === 'jobs') {
@@ -39,6 +49,8 @@ export function novaSlashCommand() {
     subcommand('research', 'Start a research job in a new public thread', [textOption('request', 'Research request', true), textOption('guild', 'Server ID for requests from DMs'), textOption('channel', 'Parent channel ID for requests from DMs')]),
     subcommand('jobs', 'Inspect or stop research jobs', [textOption('operation', 'list, status, or stop'), textOption('id', 'Job ID')]),
     subcommand('digest', 'Opt in to discussion digests delivered in your DMs', [textOption('operation', 'list, add, remove, run, or status'), textOption('configuration', 'JSON configuration for add'), textOption('id', 'Digest ID')]),
+    ...['reminder', 'alert', 'handoff', 'tasks'].map((action) => subcommand(action, 'Owner DM reminders, alerts or coding handoffs', [textOption('operation', 'list, add, start, status, stop or remove'), textOption('configuration', 'JSON request for add or start'), textOption('id', 'Existing item ID')])),
+    subcommand('approvals', 'List pending and resolved action approvals'),
   ] };
 }
 
@@ -53,6 +65,10 @@ export function readNovaInteraction(interaction) {
     try { request.configuration = JSON.parse(string('configuration') || '{}'); }
     catch { request.action = 'help'; request.value = 'Digest configuration must be valid JSON'; }
   }
+  if (['reminder', 'alert', 'handoff', 'tasks'].includes(action)) {
+    Object.assign(request, { operation: string('operation') || 'list', id: string('id') });
+    if (string('configuration')) { try { request.configuration = JSON.parse(string('configuration')); } catch { request.action = 'help'; request.value = 'Use valid JSON for the action configuration'; } }
+  }
   return request;
 }
 
@@ -61,12 +77,14 @@ export function createControlButtons({ now = Date.now, ttlMs = 30 * 60000, maxim
   function create(scope, actions = ['details', 'stop']) {
     for (const [key, value] of tokens) if (value.expiresAt <= now()) tokens.delete(key);
     const labels = { details: 'Details', stop: 'Stop answer', remember: 'Remember message', 'read-more': 'Read more', retry: 'Retry request' };
-    const buttons = actions.slice(0, 5).map((action) => {
-      if (!Object.hasOwn(labels, action)) throw new Error('Unknown Nova button');
+    const buttons = actions.slice(0, 5).map((item) => {
+      const details = typeof item === 'string' ? { action: item } : item;
+      const { action } = details;
+      if (!Object.hasOwn(labels, action) && !['approval', 'task-approval'].includes(action)) throw new Error('Unknown Nova button');
       const id = randomBytes(18).toString('base64url');
-      tokens.set(id, { ...scope, action, expiresAt: now() + ttlMs });
+      tokens.set(id, { ...scope, ...details, expiresAt: now() + ttlMs });
       while (tokens.size > maximum) tokens.delete(tokens.keys().next().value);
-      return { type: 2, style: action === 'stop' ? 4 : 2, label: labels[action], custom_id: `nova:${id}` };
+      return { type: 2, style: action === 'stop' || details.decision === 'decline' ? 4 : 2, label: details.label || labels[action], custom_id: `nova:${id}` };
     });
     return [{ type: 1, components: buttons }];
   }
@@ -76,6 +94,7 @@ export function createControlButtons({ now = Date.now, ttlMs = 30 * 60000, maxim
     const value = tokens.get(id);
     if (!value || value.expiresAt <= now() || value.channelId !== channelId) throw new Error('This Nova control expired or belongs to another conversation');
     tokens.delete(id);
+    if (['approval', 'task-approval'].includes(value.action)) return { action: value.action, id: value.id, taskId: value.taskId, requestId: value.requestId, decision: value.decision, userId, channelId };
     return { action: value.action, value: value.action === 'retry' ? value.triggerMessageId : value.messageId, userId, channelId: value.channelId, guildId: value.guildId, directMessages: value.directMessages };
   }
   return { create, consume, recognizes: (customId) => customId?.startsWith('nova:') && tokens.has(customId.slice(5)), close: () => tokens.clear() };

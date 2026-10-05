@@ -17,7 +17,7 @@ const messageFields = {
 
 export function createDiscordMcpServer(service, { novaOptions = {} } = {}) {
   const server = new McpServer(
-    { name: 'discord-readonly', version: '2.9.0' },
+    { name: 'discord-readonly', version: '2.10.0' },
     {
       instructions: loadInstructions('mcp-server.md'),
     },

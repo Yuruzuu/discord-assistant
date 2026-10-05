@@ -1,11 +1,11 @@
 {
   "name": "discord",
-  "version": "2.9.0",
-  "description": "Search Discord messages, read profiles, send playful replies, and start proactive server or owner-only DM conversations.",
+  "version": "2.10.0",
+  "description": "Owner-only Discord assistant with PDF reading, reminders, approved app actions, and Codex/Claude Code handoffs through T3 Code.",
   "author": {
     "name": "Yuruzuu"
   },
-  "repository": "https://github.com/Yuruzuu/discord-mcp",
+  "repository": "https://github.com/Yuruzuu/discord-assistant",
   "license": "MIT",
   "skills": "./skills/",
   "mcpServers": "./.mcp.json",

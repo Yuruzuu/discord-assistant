@@ -54,7 +54,7 @@ function contents(result) { return JSON.parse(result.contentItems[0].text); }
 test('owner DM tools resolve names, search other servers, preserve continuation and open message URL context', async () => {
   const { service, calls } = fixture();
   const tools = createDiscordReadTools(service, scope);
-  assert.equal(tools.definitions.length, 12);
+  assert.equal(tools.definitions.length, 13);
   assert.ok(tools.definitions.every((tool) => tool.type === 'function' && tool.inputSchema.additionalProperties === false));
   assert.equal(contents(await tools.call('discord_list_servers', {})).servers.length, 2);
   const members = contents(await tools.call('discord_find_members', { guildId, query: 'Valk' }));
@@ -106,7 +106,7 @@ test('dynamic read calls work inside a warm ephemeral conversation and report on
   try {
     await respond(context, undefined, { onProgress: async (event) => { progress.push(event); } });
     const start = server.requests.find((request) => request.method === 'thread/start').params;
-    assert.equal(start.dynamicTools.length, 12);
+    assert.equal(start.dynamicTools.length, 13);
     assert.equal(start.config.features.shell_tool, false);
     assert.equal(start.config.permissions[start.permissions].network.enabled, false);
     assert.ok(server.toolResponses.slice(0, 3).every((response) => response.result.success));

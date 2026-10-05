@@ -158,6 +158,27 @@ that groups verbs ("I checked your connected apps and your Gmail, and searched
 adds a closing note. Arguments are sanitized as described in
 [security-invariants.md](security-invariants.md).
 
+While a step runs, its sanitized tool call or actual handoff command appears in
+a fenced block. Completion removes that block immediately. Failed/cancelled
+finals remove all active blocks too; private reasoning and command output are
+never used as progress text.
+
+## Owner-DM proposals and independent tasks
+
+`owner-capabilities` owns per-DM action approvals, account reminders/alerts and
+Nova's T3 coding tasks. Model tools prepare immutable proposals, while opaque
+owner-only approval buttons or explicit text/slash controls execute them.
+`owner-actions` records execution before the side effect, retains unknown
+outcomes without replay, and uses an independent process lease. App schemas and
+destructive classifications are rechecked at approval time.
+
+Scheduled checks read bounded Discord/app conditions without model calls and
+send host-written notifications only into the verified owner DM. T3 task
+transcripts stay in T3; Nova observes factual commands, routes operation
+approvals, and sends completion results. Stopping Nova stops observation while
+T3 work continues. PDF preprocessing adds numbered document text and rendered
+page images to the normal request context; scoped reads continue with `nextPage`.
+
 ## 8. After the turn
 
 `onBatchComplete` marks ingress `sent`, `failed` or `cancelled`. It also

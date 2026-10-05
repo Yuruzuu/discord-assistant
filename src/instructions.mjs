@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 
 // Prompts live as Markdown in /instructions so they can be edited without touching code; the bundled plugin points DISCORD_INSTRUCTIONS_DIR at its copy.
 export function instructionsRoot() {
-  return process.env.DISCORD_INSTRUCTIONS_DIR || fileURLToPath(new URL('../instructions/', import.meta.url));
+  return process.env.DISCORD_INSTRUCTIONS_DIR || (typeof __dirname === 'string' ? join(__dirname, 'instructions') : fileURLToPath(new URL('../instructions/', import.meta.url)));
 }
 
 function render(text, variables, file) {

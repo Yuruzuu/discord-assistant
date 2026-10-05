@@ -17,6 +17,7 @@ const settingsSchema = z.object({
   voice: z.object({ backend: z.enum(['disabled', 'local', 'api']).default('disabled'), executable: z.string().optional(), model: z.string().optional(), ffmpeg: z.string().optional(),
     endpoint: z.string().url().optional(), apiKeyEnv: z.string().regex(/^[A-Z_][A-Z0-9_]*$/).optional() }).strict().default({ backend: 'disabled' }),
   conversations: z.record(z.string().regex(/^[A-Za-z0-9_-]{1,40}:\d{17,20}$/), conversationSchema).default({}),
+  pdf: z.boolean().default(true), reminders: z.boolean().default(true), handoffs: z.boolean().default(true), appActions: z.boolean().default(true),
   web: z.boolean().default(true), media: z.boolean().default(true), playbooks: z.boolean().default(true), apps: z.boolean().default(true), timeZone: z.string().max(64).optional(), webSearch: z.enum(['auto', 'live', 'cached', 'indexed', 'disabled']).default('auto'),
 }).strict();
 

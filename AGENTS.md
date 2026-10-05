@@ -14,8 +14,8 @@ owner-only proactive Discord bot.
   and to send messages, replies, reactions and forwards as a bot.
 - **Nova** (`src/proactive/`): detached background listener processes. They
   watch Discord over the Gateway and answer the fixed owner using the logged-in
-  **Codex CLI** (`codex app-server`) as the model runtime, with scoped read-only
-  tools.
+  **Codex CLI** (`codex app-server`) as the model runtime, with scoped reads and
+  owner-approved action proposals. T3 Code owns separate coding-task harnesses.
 - **Plugin** (`plugins/discord/`): Claude/Codex plugin wrapper. Its `runtime/`
   folder is an esbuild bundle generated from `src/`, and it is gitignored.
 
@@ -75,11 +75,13 @@ These are summarised here. The full list is in
 2. **Nova's reading scope.** Server conversations read only their own server.
    The owner DM may read any server the bot can see. Other users' DMs are never
    readable. The same check (`read-tools.mjs`) applies to anything Nova forwards.
-3. **Nova never writes on its own.** The model returns a JSON *reply plan*. The
+3. **Nova never executes arbitrary writes.** The model returns a JSON *reply plan*. The
    host validates it (`reply-validation.mjs`) and only then sends. Worker tools
    are read-only. Posting outside the current conversation (`channelMessages`)
    is owner-DM-only, limited to server text channels, blocked after
-   connected-app reads, and confirmed back to the owner.
+   connected-app reads, and confirmed back to the owner. Supplied owner-DM
+   proposal tools prepare immutable app/schedule/handoff requests; a separate
+   exact owner approval or explicit control authorizes host execution.
 4. **No duplicate sends.** Every send uses a nonce with `enforce_nonce`. Nova
    journals deliveries (`delivery-journal.mjs`). Failed sends are never retried
    automatically after an unknown outcome.

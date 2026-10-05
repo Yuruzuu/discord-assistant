@@ -207,7 +207,7 @@ export function createConversationReply({ command = process.env.CODEX_CLI_PATH |
     const { images = [], ...textContext } = context;
     const selectedImages = images.filter((image) => /^data:image\/(?:png|jpeg|webp|gif);base64,/.test(image.imageUrl || '')).slice(0, 8);
     const input = { ...textContext, recentMessages: nearby,
-      ...(selectedImages.length ? { imageSources: selectedImages.map((image, index) => ({ index, sourceMessageId: /^\d{17,20}$/.test(image.sourceMessageId || '') ? image.sourceMessageId : null })) } : {}),
+      ...(selectedImages.length ? { imageSources: selectedImages.map((image, index) => ({ index, sourceMessageId: /^\d{17,20}$/.test(image.sourceMessageId || '') ? image.sourceMessageId : null, ...(image.pageNumber ? { pageNumber: image.pageNumber, attachmentId: image.attachmentId } : {}) })) } : {}),
     };
     const imageInputs = selectedImages.map((image) => ({ type: 'image', url: image.imageUrl }));
     try {

@@ -1,7 +1,9 @@
+import { commandTrace, sanitizeCommand } from './command-trace.mjs';
+
 const snowflake = /^\d{17,20}$/;
 const appNames = { gmail: 'Gmail', google_drive: 'Google Drive', github: 'GitHub', linear: 'Linear', figma: 'Figma', chatgpt_space: 'ChatGPT Space', sites: 'Sites' };
 // Progress text quotes model-chosen arguments, so strip anything that could become mentions, markup or extra lines.
-const quote = (value) => `"${String(value).replace(/[\r\n`*_~|<>@#]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 60)}"`;
+const quote = (value) => `"${sanitizeCommand(value).replace(/[\r\n`*_~|<>@#]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 60)}"`;
 const plural = (count, word) => `*${count}* ${word}${count === 1 ? '' : 's'}`;
 function listed(items, render, limit = 3) {
   const shown = items.slice(0, limit).map(render);
@@ -63,6 +65,13 @@ const host = (url) => { try { return new URL(url).hostname; } catch { return 'th
 const filename = (file) => quote(String(file || 'that file').split(/[\\/]/).at(-1));
 
 const activities = {
+  pdf_read: { category: 'PDF', start: () => 'I’m reading the PDF attachment.', done: () => 'I’ve read the PDF attachment.', summary: () => ['read', 'the PDF attachment'] },
+  discord_read_pdf: { category: 'PDF', start: () => 'I’m opening that PDF attachment.', done: () => 'I’ve opened that PDF attachment.', summary: () => ['read', 'the PDF attachment'] },
+  apps_prepare_action: { category: 'approval', start: () => 'I’m preparing an app action for your approval.', done: () => 'I’ve prepared an app action for your approval.', summary: () => ['prepared', 'an app action for approval'] },
+  nova_prepare_reminder: { category: 'reminder', start: () => 'I’m preparing your reminder.', done: () => 'I’ve prepared your reminder for approval.', summary: () => ['prepared', 'your reminder'] },
+  nova_prepare_alert: { category: 'alert', start: () => 'I’m preparing your conditional alert.', done: () => 'I’ve prepared your alert for approval.', summary: () => ['prepared', 'your conditional alert'] },
+  nova_prepare_handoff: { category: 'handoff', start: () => 'I’m preparing the coding task handoff.', done: () => 'I’ve prepared the handoff for approval.', summary: () => ['prepared', 'the coding task handoff'] },
+  task_command: { category: 'command', start: () => 'The coding agent is running this command.', done: () => 'The coding agent finished that command.', summary: () => ['ran', 'the coding command'] },
   discord_list_servers: { category: 'servers', start: () => 'I’m checking which servers I can see.', done: (_, count) => (Number.isSafeInteger(count) ? `I’ve found ${plural(count, 'server')} I can see.` : 'I’ve checked the servers I can see.'), summary: () => ['checked', 'which servers I can see'] },
   discord_list_channels: { category: 'channels', start: () => 'I’m looking through the server’s channels.', done: (_, count) => (Number.isSafeInteger(count) ? `I’ve looked through ${plural(count, 'channel')} and threads.` : 'I’ve looked through the server’s channels.'), summary: () => ['looked through', 'the server’s channels'] },
   discord_find_members: { category: 'members', start: (args) => `I’m looking up members matching ${asked(args)}.`, done: (args, count) => `I’ve looked up members matching ${asked(args)}${found(count, 'match')}.`, summary: (args) => ['looked up', `members matching ${asked(args)}`] },
@@ -130,14 +139,15 @@ export function createProgressReporter({ send, edit, remove, signal, now = Date.
     } catch (error) { if (!sendSignal.aborted) onError(error); }
   }
 
-  function lineFor(entry) {
+  function lineFor(entry, showTrace = true) {
     const activity = activities[entry.toolName];
     if (entry.stage === 'failed') return failedText(activity);
-    return entry.stage === 'done' ? activity.done(entry.args, entry.count) : activity.start(entry.args);
+    if (entry.stage === 'done') return activity.done(entry.args, entry.count);
+    return activity.start(entry.args) + (showTrace ? `\n\`\`\`\n${commandTrace(entry.toolName, entry.args)}\n\`\`\`` : '');
   }
 
-  function renderLog() {
-    const lines = entries.map(lineFor);
+  function renderLog(showTrace = true) {
+    const lines = entries.map((entry) => lineFor(entry, showTrace));
     let first = 0;
     let size = lines.reduce((total, line) => total + line.length + 1, 0);
     while (first < lines.length - 1 && size > 1850) size -= lines[first++].length + 1;
@@ -201,7 +211,7 @@ export function createProgressReporter({ send, edit, remove, signal, now = Date.
   }
 
   async function report(rawEvent, deliverySignal) {
-    if (closed || signal?.aborted || deliverySignal?.aborted || attempted >= maxMessages) return;
+    if (closed || signal?.aborted || deliverySignal?.aborted || (!edit && attempted >= maxMessages)) return;
     const activity = Object.hasOwn(activities, rawEvent?.toolName) ? activities[rawEvent.toolName] : null;
     if (!activity || !['started', 'completed', 'failed'].includes(rawEvent.stage)) return;
     // Tool arguments come from the model and may be null or malformed; renderers only ever see a plain object.
@@ -227,7 +237,7 @@ export function createProgressReporter({ send, edit, remove, signal, now = Date.
       if (!receipt || finishSignal?.aborted) return;
       try {
         // The log stays until the answer is over; then it becomes a one-sentence summary (or keeps the steps with a stop note) and loses its buttons.
-        const log = entries.length ? `${renderLog()}\n` : '';
+        const log = entries.length ? `${renderLog(false)}\n` : '';
         const content = cancelled ? `${log}Stopped this answer.` : failed ? `${log}This answer stopped before it finished. Use /nova status for details or try again.` : summarize(entries) || (remove ? '' : 'Finished checking.');
         if (content) await edit(receipt, content, finishSignal, { components: [] });
         else await remove(receipt, finishSignal);

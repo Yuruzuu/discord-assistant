@@ -43,6 +43,10 @@ overrides persist in `nova.json`.
 | `$DATA/memory/<account>-<channel or dm-owner>/memory.md` | `memory.mjs` | Owner-approved memory |
 | `$DATA/delivery/<account>-<channel>.json` | `delivery-journal.mjs` | Ingress claims, send operations and receipts (7-day retention, ≤ 2000 entries). **Hard-coded to `~/.local/share`** (ignores `XDG_DATA_HOME`) |
 | `$DATA/digests/…` | `digests.mjs` | Digest schedules and cursors. Also hard-coded under `~/.local/share` |
+| `$DATA/schedules/<account>.json` | `schedules.mjs` | Owner-only reminders/alerts, cursors, uncertain delivery state; exclusive lease |
+| `$DATA/approvals/<account>-<dm>.json` | `owner-actions.mjs` | Immutable exact proposals, expiration and outcome state; exclusive lease |
+| `$DATA/proactive/task-handoffs/<account>-<dm>/<id>.json` | `task-handoffs.mjs` | Nova-owned T3 task metadata without prompts, commands or results |
+| `$CONF/t3-session.json` | `t3-client.mjs` | Dedicated expiring T3 session; private `0600`, never sent to models |
 
 See `state.mjs` (`listenerTargetPaths`) for exact naming.
 
@@ -54,6 +58,7 @@ See `state.mjs` (`listenerTargetPaths`) for exact naming.
 | `plugins/discord/mcp.json` | `plugins/discord/.mcp.json` |
 | `index.mjs`, `src/**` | `plugins/discord/runtime/{server,proactive,supervisor}.cjs` + `THIRD_PARTY_NOTICES.txt` (gitignored) |
 | `instructions/**` | `plugins/discord/runtime/instructions/**` (gitignored copy) |
+| `pdf-worker.mjs`, dependency assets | bundled isolated PDF worker, fonts and build-host native canvas dependency |
 | `LICENSE` | `plugins/discord/LICENSE` |
 
 `.agents/plugins/marketplace.json` lists the local plugin for Codex

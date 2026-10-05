@@ -119,6 +119,7 @@ async function main() {
     const bot = await client.getCurrentUser();
     const onStatus = (snapshot) => { void updateState(snapshot); };
     const runtimeOptions = (guildId, channelId) => ({ settingsStore,
+      actionComponents: (actions) => buttons.create({ guildId, channelId, directMessages: configuration.directMessages }, actions),
       progressComponents: (trigger) => buttons.create({ guildId, channelId, directMessages: configuration.directMessages, triggerMessageId: trigger.id }),
       messageComponents: (trigger, message) => buttons.create({ guildId, channelId, directMessages: configuration.directMessages, triggerMessageId: trigger.id, messageId: message.id }, ['remember', 'read-more', 'retry', 'details']),
     });

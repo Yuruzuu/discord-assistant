@@ -12,7 +12,7 @@ images, voice notes, reactions, progress displays and owner controls.
 Reading uses Discord REST. Sending, reactions, progress edits and research-thread
 creation occur only when requested or within explicitly enabled conversations.
 The listener starts on demand; it does not auto-start with the operating system.
-Version 2.9.0 exposes 36 MCP tools, or 39 with approved project roots. Existing
+Version 2.10.0 exposes 37 MCP tools, or 40 with approved project roots. Existing
 MCP tool names and arguments remain compatible.
 
 ## Requirements
@@ -512,8 +512,10 @@ link reading after private app data has been read. Set `"live"`, `"cached"`,
 
 Owner DMs can also use the apps connected to your Codex/ChatGPT account (for
 example Gmail, Google Drive, GitHub and Linear) through `apps_list_tools` and
-`apps_call_tool`. Access is read-only: only tools the connector marks read-only
-and non-destructive are offered, and payment tools (PayPal, invoices, billing,
+`apps_call_tool`. Ordinary calls remain read-only. `apps_list_tools` with
+`access: "action"` discovers write actions; `apps_prepare_action` sends an exact
+proposal for separate owner approval. Only the host can execute the approved
+proposal, once, in the owner DM. Payment tools (PayPal, invoices, billing,
 and similar) are always refused. The reply model never gets native app access;
 the listener calls tools on a hidden Codex thread that never runs model turns.
 Server conversations never see these tools. After app data is read, public link
@@ -523,6 +525,58 @@ screenshot, or an image attachment from Gmail or Linear), Nova can post it in
 the DM. Live screenshots of Gmail, Drive or spreadsheet pages are not
 supported. Connect or disconnect apps in ChatGPT/Codex, and set
 `"apps": false` to turn the feature off.
+
+### PDFs, reminders, alerts and coding handoffs
+
+Nova reads PDFs attached to an owner request or its native reply context. Text
+is extracted page by page; scanned pages are rendered locally for model vision.
+`discord_read_pdf` opens a PDF by authorized channel/message/attachment IDs and
+returns `nextPage` for continued reading. Parsing has a 30-second deadline,
+16 MiB input limit, 300-page document limit, at most 20 selected pages and three
+rendered pages per call. The plugin includes its isolated PDF worker, fonts and
+the build host's native rendering dependency. Set `"pdf": false` to disable it.
+
+In your owner DM, ask naturally for a reminder or conditional alert. Nova
+prepares its exact schedule and sends Approve once / Decline buttons. Explicit
+commands can also create a schedule directly:
+
+```text
+nova reminder add {"content":"Review the hotbar changes","runAt":"2026-10-06T09:00:00+08:00"}
+nova reminder list
+nova reminder remove <id>
+nova alert add {"content":"New hotbar discussion","condition":{"type":"discord","guildId":"SERVER_ID","query":"hotbar"},"intervalMinutes":15}
+nova alert remove <id>
+```
+
+Reminders support one-time or recurring delivery. Alerts check new Discord
+messages or a predicate on a discovered read-only app result. Checks stay quiet
+without model calls; notifications go only to the owner DM. Schedules survive
+restart, and uncertain deliveries halt until explicitly resolved. Relative times
+use `timeZone` in private `nova.json`; use an ISO timestamp with an explicit
+offset in commands. Set `"reminders": false` to disable scheduling.
+
+Coding handoffs use the running local T3 Code app and its connected Codex/Claude
+Code harnesses. Ask Nova for its T3 catalog, choose an existing project and exact
+supported model, and approve the prepared task. `nova tasks catalog`,
+`nova tasks list`, `nova tasks status <id>` and `nova tasks stop <id>` inspect or
+stop Nova's own tasks. Explicit `nova handoff start` accepts JSON with `projectId`,
+`harness` (`codex` or `claude-code`), `model`, `title` and `request`. Tasks work in
+that selected project's root and use T3's approval-required mode. Command/tool
+activity is shown in temporary fenced blocks; specific harness approvals use
+owner-only buttons. Nova never exposes private reasoning. T3 keeps running tasks
+when Nova stops, and Nova resumes observation without relaunching them.
+
+Connect using the supported `configureT3Connection()` helper in
+`src/proactive/t3-client.mjs`. Its dedicated 30-day session is kept in private
+`~/.config/discord-mcp/t3-session.json`. T3 must remain running; reconnect after
+session expiry. Set `"handoffs": false` to disable the integration. See
+[the handoff guide](agents/task-handoffs.md) and [schedule guide](agents/schedules.md).
+
+Prepared app actions never execute before your separate approval. Large
+proposals include a complete JSON attachment to review. Use `nova approvals`,
+`nova approve <id>` or `nova decline <id>` if buttons expired. Uncertain app
+outcomes are never automatically retried. Set `"appActions": false` to disable
+write proposals while keeping connected-app reads.
 
 Restart the relevant listener and MCP client after editing global capability
 settings. Owner conversation controls apply their settings while listening.

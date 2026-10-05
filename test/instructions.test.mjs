@@ -7,6 +7,21 @@ import { loadInstructions } from '../src/instructions.mjs';
 import { createCodexResponder } from '../src/proactive/codex-responder.mjs';
 import { fakeCodexServer } from './helpers/codex-app-server.mjs';
 import { directMessageOwnerId } from '../src/proactive/target.mjs';
+import { build } from 'esbuild';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+
+test('packaged CommonJS prompts resolve beside the bundle without launcher environment overrides', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'nova-bundled-instructions-'));
+  try {
+    await mkdir(join(root, 'instructions', 'nova'), { recursive: true });
+    await writeFile(join(root, 'instructions', 'nova', '01-test.md'), 'Bundled Nova prompt.');
+    const bundle = join(root, 'instructions.cjs');
+    await build({ entryPoints: [new URL('../src/instructions.mjs', import.meta.url).pathname], outfile: bundle, bundle: true, platform: 'node', format: 'cjs', logLevel: 'silent' });
+    const { stdout } = await promisify(execFile)(process.execPath, ['-e', 'process.stdout.write(require(process.argv[1]).loadInstructions("nova"));', bundle], { cwd: root, env: { ...process.env, DISCORD_INSTRUCTIONS_DIR: '' } });
+    assert.equal(stdout, 'Bundled Nova prompt.');
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
 
 test('folders load in name order, strip editor comments, skip READMEs and fill placeholders', async () => {
   const root = await mkdtemp(join(tmpdir(), 'instructions-'));

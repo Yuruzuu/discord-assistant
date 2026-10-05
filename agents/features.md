@@ -50,6 +50,10 @@ tests that cover it. Tool details are in [tools.md](tools.md).
 | Research jobs (new public thread) | `nova research …`, `nova jobs …` | `research-jobs.mjs`, `server-mentions.mjs` (`bindThread`) | `research-jobs` |
 | Opted-in digests | `nova digest add/list/run/remove` (owner DM listener) | `digests.mjs` | `proactive-digests` |
 | Gateway resilience | automatic | `gateway.mjs`, `gateway-strategy.mjs`, `supervisor.mjs` | `gateway-recovery`, `proactive-supervisor` |
+| PDF attachment reading and scanned-page vision | current request/reply context; `discord_read_pdf` | `pdf-reader`, `pdf-worker`, `context`, `read-tools` | `pdf-reader`, `proactive-pdf-tools` |
+| Reminders and conditional alerts | explicit owner DM command or approved proposal | `schedules`, `schedule-conditions`, `schedule-lease`, `owner-capabilities` | `proactive-schedules`, `owner-capabilities-schedules` |
+| Approved connected-app actions | `apps_prepare_action`, owner approval | `connected-apps`, `owner-actions`, `owner-capabilities` | `approved-app-actions`, `owner-actions` |
+| Codex/Claude Code task handoffs | selected T3 project/model, owner approval/control | `t3-client`, `task-handoffs`, `owner-capabilities` | `t3-client`, `task-handoffs`, `owner-capabilities-handoffs` |
 
 ## Packaging
 

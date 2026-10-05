@@ -117,7 +117,7 @@ test('app tools exist only in the owner DM worker and block web links for the re
   await assert.rejects(() => tools.call('web_read_link', { url: 'https://example.com/?leak=secret' }), /unavailable for the rest of this answer/);
   tools.beginTurn();
   await assert.rejects(() => tools.call('web_read_link', { url: 'https://example.com/' }), /lookup stub/);
-  assert.deepEqual(calls, [['list', { app: 'gmail', limit: 40 }], ['call', { tool: 'gmail.search_emails', arguments: { query: 'hi' } }]]);
+  assert.deepEqual(calls, [['list', { app: 'gmail', limit: 40, access: 'read' }], ['call', { tool: 'gmail.search_emails', arguments: { query: 'hi' } }]]);
 });
 
 test('app images become per-answer shareable handles that Nova can post into the owner DM', async () => {
