@@ -1,14 +1,8 @@
 import { createHash } from 'node:crypto';
-import { forwardResolvedMessage, sendResolvedMessage } from '../messaging.mjs';
+import { forwardResolvedMessage, markSendStatus, sendResolvedMessage } from '../messaging.mjs';
 import { normalizeReactionEmoji } from '../reactions.mjs';
 import { splitDiscordText, validateGeneratedFiles } from './discord-chunks.mjs';
 import { shapeMessage } from '../shapes.mjs';
-
-// A 4xx means Discord refused the send; anything else (5xx, network) leaves the outcome unknown, so it is never resent automatically.
-export function markSendStatus(error) {
-  error.sendStatus = error.status && error.status < 500 ? 'rejected' : 'unknown';
-  return error;
-}
 
 export function createReplySender(service, { guildId, channelId, listenerId, directMessages = false, deliveryJournal, progressComponents, messageComponents, forwardSource = async () => { throw new Error('Forwarding is unavailable in this conversation'); }, sharedImage = () => null, sendTarget = async () => { throw new Error('Posting in other channels is unavailable in this conversation'); } }) {
   let currentTrigger;

@@ -109,7 +109,8 @@ These are summarised here. The full list is in
 - Reuse the shared helpers instead of copying them: `writeFileAtomic` and
   `writeState` (`proactive/state.mjs`) for private files, `assertSnowflake`,
   `validateCursors` and `compareSnowflakes` (`discord-url.mjs`), and
-  `batchIdFor` inside `reply-sender.mjs`.
+  `markSendStatus` (`messaging.mjs`) for the rejected/unknown outcome of a
+  failed send, and `batchIdFor` inside `reply-sender.mjs`.
 - Errors from sends carry `nonce`, `sendStatus` (`rejected` | `unknown`) and,
   for batches, `batchId`, `sentMessages` and `failedMessageIndex`.
   `tool-results.failure()` surfaces these fields.

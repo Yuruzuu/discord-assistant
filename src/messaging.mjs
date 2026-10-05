@@ -55,6 +55,12 @@ export async function sendMessage(service, { guildId, channelId, content, sticke
 }
 
 // Every send carries a nonce with enforce_nonce so Discord drops duplicates; a failure without a 4xx answer has an unknown outcome.
+// A 4xx means Discord refused the send; anything else (5xx, network) leaves the outcome unknown, so it is never resent automatically.
+export function markSendStatus(error) {
+  error.sendStatus = error.status && error.status < 500 ? 'rejected' : 'unknown';
+  return error;
+}
+
 async function postMessage({ account, channel }, { guildId, channelId, nonce }, payload, signal) {
   signal?.throwIfAborted();
   const messageNonce = nonce ?? randomBytes(12).toString('hex');
@@ -63,8 +69,7 @@ async function postMessage({ account, channel }, { guildId, channelId, nonce }, 
     message = await account.client.sendMessage(channelId, { ...payload, nonce: messageNonce, enforce_nonce: true }, { signal });
   } catch (error) {
     error.nonce = messageNonce;
-    error.sendStatus = error.status && error.status < 500 ? 'rejected' : 'unknown';
-    if (error.sendStatus === 'unknown') {
+    if (markSendStatus(error).sendStatus === 'unknown') {
       error.message += ' The send outcome is unknown; reuse the provided nonce if retrying.';
     }
 
