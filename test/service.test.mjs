@@ -110,6 +110,28 @@ test('discovers multiple servers and routes a message URL to the right bot', asy
   assert.equal(result.structured.messages[0].url, `https://discord.com/channels/${guildB}/${channelB}/${messageB}`);
 });
 
+test('discovery reports expected servers a bot cannot see and routes guild reads to a bot that sees them', async () => {
+  const base = createFetch();
+  const guildTokens = [];
+  const discord = new DiscordService({
+    accounts: [
+      { id: 'primary', token: 'token-a', expectedGuildIds: [guildA, guildB] },
+      { id: 'dev', token: 'token-b', expectedGuildIds: [guildB] },
+    ],
+    fetchImpl: async (input, options = {}) => {
+      if (new URL(input).pathname === `/api/v10/guilds/${guildB}`) guildTokens.push(options.headers.Authorization);
+      return base(input, options);
+    },
+    sleep: async () => {},
+    maxRetries: 0,
+  });
+  const discovered = await discord.listServers();
+  assert.deepEqual(discovered.expectedMissing, [{ accountId: 'primary', guildId: guildB }]);
+  assert.deepEqual(discovered.servers.map((guild) => [guild.id, guild.accounts]), [[guildA, ['primary']], [guildB, ['dev']]]);
+  assert.equal((await discord.resolveGuild(guildB)).account.id, 'dev');
+  assert.deepEqual(guildTokens, ['Bot token-b'], 'the bot that lists the guild is tried first');
+});
+
 test('invalidates a cached channel route and falls back to another bot', async () => {
   let primaryRevoked = false;
   const fetchImpl = async (input, options = {}) => {
