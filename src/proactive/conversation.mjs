@@ -94,10 +94,12 @@ export function createConversationReply({ command = process.env.CODEX_CLI_PATH |
             }),
           ]);
         } finally { if (abortTool) toolSignal.removeEventListener('abort', abortTool); }
-        if (!Array.isArray(result.contentItems) || Buffer.byteLength(JSON.stringify(result.contentItems)) > 16 * 1024 * 1024) throw new Error('Tool result exceeded the response content budget');
+        // Image results can carry megabytes of base64, so serialize once for both the size check and the repeat fingerprint.
+        const serialized = Array.isArray(result.contentItems) ? JSON.stringify(result.contentItems) : null;
+        if (serialized === null || Buffer.byteLength(serialized) > 16 * 1024 * 1024) throw new Error('Tool result exceeded the response content budget');
         if (!result.success) turn.failures.set(callKey, (turn.failures.get(callKey) || 0) + 1);
         else {
-          const resultFingerprint = createHash('sha256').update(JSON.stringify(result.contentItems)).digest('hex');
+          const resultFingerprint = createHash('sha256').update(serialized).digest('hex');
           const previous = turn.results.get(callKey);
           turn.results.set(callKey, { fingerprint: resultFingerprint, repetitions: previous?.fingerprint === resultFingerprint ? previous.repetitions + 1 : 1 });
         }
@@ -114,12 +116,14 @@ export function createConversationReply({ command = process.env.CODEX_CLI_PATH |
     return operation;
   }
 
+  async function abandonStart() { await reset(); throw new Error('The Codex conversation is stopped'); }
+
   async function start() {
     if (closed) throw new Error('The Codex conversation is stopped');
     directory = await mkdtemp(join(tmpdir(), 'nova-conversation-'));
-    if (closed) { await reset(); throw new Error('The Codex conversation is stopped'); }
+    if (closed) await abandonStart();
     server = await acquireCodexServer({ command, env: responderEnvironment(), spawnImpl, onNotification: receive, onToolCall: callTool, onFailure: failTurn });
-    if (closed) { await reset(); throw new Error('The Codex conversation is stopped'); }
+    if (closed) await abandonStart();
     if (requireSubscription) {
       const account = await server.request('account/read', { refreshToken: false });
       if (account.account?.type !== 'chatgpt') throw new Error('Nova requires a saved ChatGPT subscription login. Run codex login with your ChatGPT account before starting it.');
@@ -135,7 +139,7 @@ export function createConversationReply({ command = process.env.CODEX_CLI_PATH |
         permissions: { [permissionProfile]: { filesystem: { ':root': 'deny', [directory]: 'read' }, network: { enabled: false } } },
         features: { shell_tool: false, plugins: false, hooks: false, memories: false, js_repl: false, apps: false } },
     });
-    if (closed) { await reset(); throw new Error('The Codex conversation is stopped'); }
+    if (closed) await abandonStart();
     if (!result.thread.ephemeral) throw new Error('Codex did not create an ephemeral conversation');
     threadId = result.thread.id;
     catalogFingerprint = fingerprint();
@@ -144,8 +148,9 @@ export function createConversationReply({ command = process.env.CODEX_CLI_PATH |
   }
 
   async function warmup() {
-    if (active && threadId && catalogFingerprint !== fingerprint()) throw new Error('Cannot change the tool catalog during an active answer');
-    if (server?.isClosed() || (threadId && catalogFingerprint !== fingerprint())) await reset();
+    const catalogChanged = Boolean(threadId) && catalogFingerprint !== fingerprint();
+    if (active && catalogChanged) throw new Error('Cannot change the tool catalog during an active answer');
+    if (server?.isClosed() || catalogChanged) await reset();
     if (!startup) startup = start().catch(async (error) => { await reset(); throw error; });
     await startup;
   }

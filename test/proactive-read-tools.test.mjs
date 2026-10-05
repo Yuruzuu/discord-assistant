@@ -78,6 +78,7 @@ test('server tools reject other guilds, guessed cross-server channels and every 
   await assert.rejects(() => tools.call('discord_browse_messages', { guildId, channelId: otherChannelId }), /does not belong/);
   await assert.rejects(() => tools.call('discord_browse_messages', { channelId: dmId }), /Only this owner DM/);
   await assert.rejects(() => tools.call('discord_search_messages', { guildId, channelIds: [otherChannelId] }), /does not belong/);
+  await assert.rejects(() => tools.call('discord_search_messages', { guildId, channelIds: [channelId, otherChannelId, channelId] }), /does not belong/, 'every filter channel is checked, not just the first');
   assert.equal(calls.filter(([kind]) => kind === 'search').length, 0);
 });
 

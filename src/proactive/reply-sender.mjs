@@ -4,6 +4,12 @@ import { normalizeReactionEmoji } from '../reactions.mjs';
 import { splitDiscordText, validateGeneratedFiles } from './discord-chunks.mjs';
 import { shapeMessage } from '../shapes.mjs';
 
+// A 4xx means Discord refused the send; anything else (5xx, network) leaves the outcome unknown, so it is never resent automatically.
+export function markSendStatus(error) {
+  error.sendStatus = error.status && error.status < 500 ? 'rejected' : 'unknown';
+  return error;
+}
+
 export function createReplySender(service, { guildId, channelId, listenerId, directMessages = false, deliveryJournal, progressComponents, messageComponents, forwardSource = async () => { throw new Error('Forwarding is unavailable in this conversation'); }, sharedImage = () => null, sendTarget = async () => { throw new Error('Posting in other channels is unavailable in this conversation'); } }) {
   let currentTrigger;
   let resolution;
@@ -29,7 +35,8 @@ export function createReplySender(service, { guildId, channelId, listenerId, dir
     if (firstReplies.size > 1000) firstReplies.delete(firstReplies.keys().next().value);
   }
 
-  async function deliver(operationId, operation, metadata) {
+  async function deliver(operationId, trigger, nonce, operation) {
+    const metadata = { channelId, triggerMessageId: trigger.id, nonce };
     const previous = await deliveryJournal?.lookup(operationId);
     if (previous?.status === 'unknown') throw new Error('A previous delivery outcome is unknown; inspect its receipt before retrying');
     if (previous?.receipt) return previous.receipt;
@@ -59,38 +66,48 @@ export function createReplySender(service, { guildId, channelId, listenerId, dir
     return resolution;
   }
 
+  // A failed batch reports how far it got (batchId, sentMessages, failedMessageIndex) so callers keep the confirmed receipts.
+  async function sendBatch(trigger, offset, run) {
+    const batch = { batchId: batchIdFor(trigger), sentMessages: [], failedMessageIndex: offset };
+    try { await run(batch); } catch (error) { throw Object.assign(error, batch); }
+    return { batchId: batch.batchId, sentMessages: batch.sentMessages };
+  }
+
+  async function upload(trigger, signal, operation, suffix, post) {
+    signal?.throwIfAborted();
+    const target = await resolve(trigger);
+    const batchId = batchIdFor(trigger);
+    const nonce = `${batchId}:${suffix}`;
+    const receipt = await deliver(`${batchId}:${operation}`, trigger, nonce, async () => {
+      let message;
+      try { message = await post(target.account.client, nonce); } catch (error) { throw markSendStatus(error); }
+      return { accountId: target.account.id, nonce, message: shapeMessage({ ...message, channel_id: channelId, guild_id: guildId }) };
+    });
+    rememberFirstReply(trigger, receipt);
+    return { batchId, sentMessages: [receipt] };
+  }
+
   const send = async (messages, trigger, signal, { offset = 0, replyToMessageId = trigger.message_reference?.message_id ? trigger.id : undefined } = {}) => {
     if (!Number.isSafeInteger(offset) || offset < 0 || offset + messages.length > 5) throw new Error('Invalid reply bubble offset');
-    const batchId = batchIdFor(trigger);
-    const sentMessages = [];
-    let failedMessageIndex = offset;
-    try {
+    return sendBatch(trigger, offset, async (batch) => {
       signal?.throwIfAborted();
       const target = await resolve(trigger);
       for (const [index, message] of messages.entries()) {
         const position = offset + index;
-        failedMessageIndex = position;
-        const content = [message.content, message.gifUrl].filter(Boolean).join('\n');
-        const chunks = splitDiscordText(content);
+        batch.failedMessageIndex = position;
+        const chunks = splitDiscordText([message.content, message.gifUrl].filter(Boolean).join('\n'));
         for (const [chunkIndex, chunk] of chunks.entries()) {
-          const nonce = chunkIndex === 0 ? `${batchId}:${position}` : `${batchId}:${position}c${chunkIndex}`;
-          const sent = await deliver(`${batchId}:${position}:text:${chunkIndex}`, () => sendResolvedMessage(target, {
+          const nonce = chunkIndex === 0 ? `${batch.batchId}:${position}` : `${batch.batchId}:${position}c${chunkIndex}`;
+          const sent = await deliver(`${batch.batchId}:${position}:text:${chunkIndex}`, trigger, nonce, () => sendResolvedMessage(target, {
             content: chunk, stickerIds: chunkIndex === 0 ? message.stickerIds : [], guildId, channelId,
             replyToMessageId: !directMessages && position === 0 && chunkIndex === 0 ? replyToMessageId : undefined,
             allowMentions: false, mentionRepliedUser: false, nonce,
-          }, signal), { channelId, triggerMessageId: trigger.id, nonce });
-          sentMessages.push(sent);
+          }, signal));
+          batch.sentMessages.push(sent);
           if (position === 0 && chunkIndex === 0) rememberFirstReply(trigger, sent);
         }
       }
-    } catch (error) {
-      error.batchId = batchId;
-      error.sentMessages = sentMessages;
-      error.failedMessageIndex = failedMessageIndex;
-      throw error;
-    }
-
-    return { batchId, sentMessages };
+    });
   };
 
   send.progress = async (content, trigger, signal, { index = 0 } = {}) => {
@@ -120,67 +137,34 @@ export function createReplySender(service, { guildId, channelId, listenerId, dir
   send.files = async (files, trigger, signal, { replyToMessageId } = {}) => {
     const validated = validateGeneratedFiles(files);
     if (!validated.length) return { sentMessages: [] };
-    signal?.throwIfAborted();
-    const target = await resolve(trigger);
-    const batchId = batchIdFor(trigger);
-    const nonce = `${batchId}:f`;
-    const receipt = await deliver(`${batchId}:files`, async () => {
-      let message;
-      try {
-        message = await target.account.client.sendMessageFiles(channelId, {
-          allowed_mentions: { parse: [], replied_user: false }, nonce, enforce_nonce: true,
-          ...(!directMessages && replyToMessageId ? { message_reference: { message_id: replyToMessageId, channel_id: channelId, fail_if_not_exists: true } } : {}),
-        }, validated, { signal });
-      } catch (error) { error.sendStatus = error.status && error.status < 500 ? 'rejected' : 'unknown'; throw error; }
-      return { accountId: target.account.id, nonce, message: shapeMessage({ ...message, channel_id: channelId, guild_id: guildId }) };
-    }, { channelId, triggerMessageId: trigger.id, nonce });
-    rememberFirstReply(trigger, receipt);
-    return { batchId, sentMessages: [receipt] };
+    return upload(trigger, signal, 'files', 'f', (client, nonce) => client.sendMessageFiles(channelId, {
+      allowed_mentions: { parse: [], replied_user: false }, nonce, enforce_nonce: true,
+      ...(!directMessages && replyToMessageId ? { message_reference: { message_id: replyToMessageId, channel_id: channelId, fail_if_not_exists: true } } : {}),
+    }, validated, { signal }));
   };
 
   send.images = async (handles, trigger, signal) => {
     if (!handles?.length) return { sentMessages: [] };
     const images = handles.slice(0, 4).map((handle) => sharedImage(handle)).filter(Boolean);
     if (images.length !== Math.min(handles.length, 4)) throw new Error('Nova selected an image that is not available in this answer');
-    signal?.throwIfAborted();
-    const target = await resolve(trigger);
-    const batchId = batchIdFor(trigger);
-    const nonce = `${batchId}:i`;
-    const receipt = await deliver(`${batchId}:images`, async () => {
-      let message;
-      try {
-        message = await target.account.client.sendMessageImages(channelId, { allowed_mentions: { parse: [] }, nonce, enforce_nonce: true }, images, { signal });
-      } catch (error) { error.sendStatus = error.status && error.status < 500 ? 'rejected' : 'unknown'; throw error; }
-      return { accountId: target.account.id, nonce, message: shapeMessage({ ...message, channel_id: channelId, guild_id: guildId }) };
-    }, { channelId, triggerMessageId: trigger.id, nonce });
-    rememberFirstReply(trigger, receipt);
-    return { batchId, sentMessages: [receipt] };
+    return upload(trigger, signal, 'images', 'i', (client, nonce) => client.sendMessageImages(channelId, { allowed_mentions: { parse: [] }, nonce, enforce_nonce: true }, images, { signal }));
   };
 
   send.channelMessages = async (items, trigger, signal) => {
     if (!items?.length) return { sentMessages: [] };
     if (items.length > 3) throw new Error('Provide at most 3 channel messages');
-    const batchId = batchIdFor(trigger);
-    const sentMessages = [];
-    let failedMessageIndex = 0;
-    try {
+    return sendBatch(trigger, 0, async (batch) => {
       for (const [index, item] of items.entries()) {
-        failedMessageIndex = index;
+        batch.failedMessageIndex = index;
         signal?.throwIfAborted();
         const target = await sendTarget(item.channelId, signal);
-        const nonce = `${batchId}:x${index}`;
+        const nonce = `${batch.batchId}:x${index}`;
         const mentionUserIds = item.notify ? [...new Set([...item.content.matchAll(/<@!?(\d{17,20})>/g)].map((match) => match[1]))].slice(0, 5) : [];
-        sentMessages.push(await deliver(`${batchId}:channel:${index}`, async () => ({ ...await sendResolvedMessage(target, {
+        batch.sentMessages.push(await deliver(`${batch.batchId}:channel:${index}`, trigger, nonce, async () => ({ ...await sendResolvedMessage(target, {
           channelId: target.channel.id, guildId: target.channel.guild_id, content: item.content, mentionUserIds, nonce,
-        }, signal), crossChannel: true }), { channelId, triggerMessageId: trigger.id, nonce }));
+        }, signal), crossChannel: true })));
       }
-    } catch (error) {
-      error.batchId = batchId;
-      error.sentMessages = sentMessages;
-      error.failedMessageIndex = failedMessageIndex;
-      throw error;
-    }
-    return { batchId, sentMessages };
+    });
   };
 
   send.confirmation = async (content, trigger, signal) => {
@@ -188,7 +172,7 @@ export function createReplySender(service, { guildId, channelId, listenerId, dir
     const target = await resolve(trigger);
     const batchId = batchIdFor(trigger);
     const nonce = `${batchId}:k`;
-    const receipt = await deliver(`${batchId}:confirmation`, () => sendResolvedMessage(target, { channelId, guildId, content: content.slice(0, 2000), nonce }, signal), { channelId, triggerMessageId: trigger.id, nonce });
+    const receipt = await deliver(`${batchId}:confirmation`, trigger, nonce, () => sendResolvedMessage(target, { channelId, guildId, content: content.slice(0, 2000), nonce }, signal));
     return { batchId, sentMessages: [receipt] };
   };
 
@@ -206,25 +190,15 @@ export function createReplySender(service, { guildId, channelId, listenerId, dir
     if (forwards.length > 5) throw new Error('Provide at most 5 forwards');
     signal?.throwIfAborted();
     const target = await resolve(trigger);
-    const batchId = batchIdFor(trigger);
-    const sentMessages = [];
-    let failedMessageIndex = 0;
-    try {
+    return sendBatch(trigger, 0, async (batch) => {
       for (const [index, forward] of forwards.entries()) {
-        failedMessageIndex = index;
+        batch.failedMessageIndex = index;
         signal?.throwIfAborted();
         const source = await forwardSource(forward, signal);
-        const nonce = `${batchId}:w${index}`;
-        sentMessages.push(await deliver(`${batchId}:forward:${index}`, () => forwardResolvedMessage(target, { guildId, channelId, source, nonce }, signal), { channelId, triggerMessageId: trigger.id, nonce }));
+        const nonce = `${batch.batchId}:w${index}`;
+        batch.sentMessages.push(await deliver(`${batch.batchId}:forward:${index}`, trigger, nonce, () => forwardResolvedMessage(target, { guildId, channelId, source, nonce }, signal)));
       }
-    } catch (error) {
-      error.batchId = batchId;
-      error.sentMessages = sentMessages;
-      error.failedMessageIndex = failedMessageIndex;
-      throw error;
-    }
-
-    return { batchId, sentMessages };
+    });
   };
 
   async function updateStatusReaction(stage, trigger, signal) {
