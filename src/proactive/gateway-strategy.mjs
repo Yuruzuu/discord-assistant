@@ -1,18 +1,29 @@
 import { createShardingStrategy } from './gateway-sdk.cjs';
 
-export async function destroyGatewaySockets(strategy, destroy, options, onError) {
-  const connecting = [...strategy.shards.values()].map((shard) => shard.connection).filter((socket) => socket?.readyState === 0);
-  for (const socket of connecting) socket.on('error', onError);
-  try { await destroy(options); }
-  finally {
-    for (const socket of connecting) if (socket.readyState === 0) socket.terminate();
-  }
+const guarded = new WeakSet();
+
+// @discordjs/ws 1.2.3 clears a shard connection's onerror during destroy without closing a pending handshake. Destroy runs on shutdown and
+// internally on reconnects (hello timeouts, resumable closes), so every shard is guarded: a still-connecting socket keeps an error listener
+// and is terminated afterwards, instead of its handshake timeout becoming an unhandled 'error' that kills the listener process.
+export function guardShard(shard, onError) {
+  if (guarded.has(shard)) return shard;
+  guarded.add(shard);
+  const destroy = shard.destroy.bind(shard);
+  shard.destroy = async (options) => {
+    const socket = shard.connection?.readyState === 0 ? shard.connection : null;
+    socket?.on('error', onError);
+    try { return await destroy(options); }
+    finally { if (socket?.readyState === 0) socket.terminate(); }
+  };
+  return shard;
 }
 
 export function createGatewayStrategy(manager, onError) {
   const strategy = createShardingStrategy(manager);
-  const destroy = strategy.destroy.bind(strategy);
-  // @discordjs/ws 1.2.3 clears onerror without closing a pending handshake.
-  strategy.destroy = (options) => destroyGatewaySockets(strategy, destroy, options, onError);
+  const spawn = strategy.spawn.bind(strategy);
+  strategy.spawn = async (shardIds) => {
+    await spawn(shardIds);
+    for (const shard of strategy.shards.values()) guardShard(shard, onError);
+  };
   return strategy;
 }

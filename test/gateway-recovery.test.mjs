@@ -4,17 +4,60 @@ import { EventEmitter } from 'node:events';
 import { createServer } from 'node:http';
 import { Client, Events } from 'discord.js';
 import { createGateway } from '../src/proactive/gateway.mjs';
-import { destroyGatewaySockets } from '../src/proactive/gateway-strategy.mjs';
+import { guardShard } from '../src/proactive/gateway-strategy.mjs';
 
-test('teardown protects and terminates a connecting socket after the SDK removes its error handler', async () => {
+function connectingSocket() {
   const socket = new EventEmitter();
   socket.readyState = 0;
+  socket.onerror = () => {};
   socket.terminate = () => { socket.readyState = 3; socket.emit('error', new Error('Opening handshake has timed out')); };
+  return socket;
+}
+
+// Mirrors @discordjs/ws 1.2.3: destroy clears onerror without closing a pending handshake, and recover reconnects through this.destroy's caller.
+function sdkShard() {
+  const shard = { connection: connectingSocket(), connections: 1 };
+  shard.destroy = async function destroy(options = {}) {
+    this.connection.onerror = null;
+    if (options.recover !== undefined) { this.connection = connectingSocket(); this.connections += 1; }
+  };
+  shard.helloTimedOut = function helloTimedOut() { return this.destroy({ recover: 0 }); };
+  return shard;
+}
+
+test('shutdown protects and terminates a connecting socket after the SDK removes its error handler', async () => {
   const errors = [];
-  const strategy = { shards: new Map([[0, { connection: socket }]]) };
-  await destroyGatewaySockets(strategy, async () => { socket.onerror = null; }, {}, (error) => errors.push(error.message));
+  const shard = guardShard(sdkShard(), (error) => errors.push(error.message));
+  const socket = shard.connection;
+  await shard.destroy({});
   assert.deepEqual(errors, ['Opening handshake has timed out']);
   assert.equal(socket.readyState, 3);
+});
+
+test('internal reconnects are guarded too, so a late handshake timeout cannot crash the listener', async () => {
+  const errors = [];
+  const shard = guardShard(sdkShard(), (error) => errors.push(error.message));
+  const stale = shard.connection;
+  await shard.helloTimedOut();
+  assert.equal(shard.connections, 2, 'the shard reconnected');
+  assert.equal(stale.readyState, 3, 'the stale handshake was terminated');
+  assert.deepEqual(errors, ['Opening handshake has timed out'], 'its error reached the listener instead of being unhandled');
+  assert.equal(shard.connection.readyState, 0, 'the new connection is left alone');
+  assert.equal(guardShard(shard, () => {}), shard, 'guarding is idempotent');
+});
+
+test('the gateway strategy guards every shard it spawns', async () => {
+  const errors = [];
+  const shard = sdkShard();
+  const { createGatewayStrategy } = await import('../src/proactive/gateway-strategy.mjs');
+  const manager = { options: {}, fetchGatewayInformation: async () => ({ url: 'ws://127.0.0.1:1', shards: 1, session_start_limit: { total: 1, remaining: 1, reset_after: 0, max_concurrency: 1 } }), getShardCount: async () => 1 };
+  const strategy = createGatewayStrategy(manager, (error) => errors.push(error.message));
+  strategy.shards.set(0, shard);
+  await strategy.spawn([]);
+  const stale = shard.connection;
+  await shard.helloTimedOut();
+  assert.equal(stale.readyState, 3);
+  assert.deepEqual(errors, ['Opening handshake has timed out']);
 });
 
 function fakeClient(login) {
