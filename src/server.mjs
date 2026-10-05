@@ -24,9 +24,9 @@ export function createDiscordMcpServer(service, { novaOptions = {} } = {}) {
   );
 
   // Shared read tools take schema and implementation from the registry; the read-tools loop below skips them.
-  const sharedReads = new Set();
+  const existingReads = new Set();
   const registerSharedRead = (name, options, respond = success) => {
-    sharedReads.add(name);
+    existingReads.add(name);
     register(server, name, { ...options, inputSchema: readToolFields(name, { trustedLocal: true }) }, async (args) => respond(await executeSharedReadTool(service, name, args)));
   };
   const withImages = ({ toolImages, ...result }) => success(result, toolImages);
@@ -195,7 +195,7 @@ export function createDiscordMcpServer(service, { novaOptions = {} } = {}) {
 
   const readTools = createDiscordReadTools(service, { trustedLocal: true, directMessages: true }, novaOptions);
   for (const tool of readTools.registry) {
-    if (sharedReads.has(tool.name)) continue;
+    if (existingReads.has(tool.name)) continue;
     register(server, tool.name, {
       title: tool.name.replaceAll('_', ' '), description: tool.spec.description, inputSchema: tool.schema.shape,
     }, async (args) => {
