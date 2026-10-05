@@ -3,7 +3,7 @@ import { createConversationContext } from './context.mjs';
 import { createProactiveEngine } from './engine.mjs';
 import { createMemoryStore, memoryPath, parseMemoryCommand } from './memory.mjs';
 import { createMemoryCommandHandler } from './memory-commands.mjs';
-import { createReplySender } from './reply-sender.mjs';
+import { createReplySender, markSendStatus } from './reply-sender.mjs';
 import { startTypingIndicator } from './typing.mjs';
 import { acceptsListenerMessage, assertOwnerDirectMessageChannel, directMessageOwnerId } from './target.mjs';
 import { createDiscordReadTools } from './read-tools.mjs';
@@ -13,6 +13,8 @@ import { createNovaSettings } from './nova-settings.mjs';
 import { createDeliveryJournal } from './delivery-journal.mjs';
 import { parseNovaCommand } from './controls.mjs';
 import { join } from 'node:path';
+
+const uncertainDelivery = (entries, messageId) => entries.some((entry) => entry.triggerMessageId === messageId && ['unknown', 'pending'].includes(entry.status));
 
 export async function createChannelRuntime(service, configuration, bot, { warm = true, scheduleReply, onStatus = () => {}, memoryRoot, settingsStore = createNovaSettings(memoryRoot ? { filename: join(memoryRoot, 'nova.json') } : {}), deliveryRoot, progressComponents, messageComponents, onControl, responderFactory = createCodexResponder } = {}) {
   const account = service.accountById(configuration.accountId);
@@ -58,7 +60,7 @@ export async function createChannelRuntime(service, configuration, bot, { warm =
             const operations = await journal.entries();
             const receipts = operations.filter((entry) => entry.triggerMessageId === message.id && entry.status === 'sent').map((entry) => entry.receipt);
             if (outcome === 'sent' && receipts.length) pending.resolve({ confirmed: true, sentMessages: receipts });
-            else { const error = new Error(`Scheduled request ${outcome}`); error.sendStatus = operations.some((entry) => entry.triggerMessageId === message.id && ['unknown', 'pending'].includes(entry.status)) ? 'unknown' : 'rejected'; pending.reject(error); }
+            else { const error = new Error(`Scheduled request ${outcome}`); error.sendStatus = uncertainDelivery(operations, message.id) ? 'unknown' : 'rejected'; pending.reject(error); }
           }
         }
       },
@@ -89,7 +91,7 @@ export async function createChannelRuntime(service, configuration, bot, { warm =
         const source = await client.getMessage(channel.id, request.value);
         if (request.action === 'retry' && source.author?.id !== directMessageOwnerId) throw new Error('Only an owner request can be retried');
         const entries = await journal.entries();
-        if (request.action === 'retry' && entries.some((entry) => entry.triggerMessageId === source.id && ['unknown', 'pending'].includes(entry.status))) throw new Error('Inspect and resolve the uncertain delivery before retrying this request');
+        if (request.action === 'retry' && uncertainDelivery(entries, source.id)) throw new Error('Inspect and resolve the uncertain delivery before retrying this request');
         const requested = request.action === 'read-more' ? `Continue with more evidence and useful detail about this answer:\n${source.content}` : `Retry the owner request, preserving verified delivery receipts:\n${source.content}`;
         const intro = await client.sendMessage(channel.id, { content: request.action === 'read-more' ? 'Owner requested more detail.' : 'Owner requested a retry.', allowed_mentions: { parse: [] } });
         await receive({ id: intro.id, guild_id: guild?.id, channel_id: channel.id, author: { id: directMessageOwnerId }, content: requested, mentions: [{ id: bot.id }], hostProvenance: { type: 'owner_control', ownerUserId: directMessageOwnerId } });
@@ -137,7 +139,7 @@ export async function createChannelRuntime(service, configuration, bot, { warm =
       signal?.throwIfAborted();
       let intro;
       try { intro = await client.sendMessage(channel.id, { content: `Preparing your ${purpose}.`, allowed_mentions: { parse: [] }, ...(nonce ? { nonce, enforce_nonce: true } : {}) }, { signal }); }
-      catch (error) { error.sendStatus = error.status && error.status < 500 ? 'rejected' : 'unknown'; throw error; }
+      catch (error) { throw markSendStatus(error); }
       const completed = new Promise((resolve, reject) => requests.set(intro.id, { resolve, reject }));
       completed.catch(() => {});
       const cancel = () => { void engine.control({ action: 'cancel-request', value: intro.id, userId: directMessageOwnerId }).catch(() => {}); };
