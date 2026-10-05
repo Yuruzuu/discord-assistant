@@ -1,6 +1,6 @@
 import { build } from 'esbuild';
 import { copyFile, cp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const repositoryRoot = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -51,16 +51,23 @@ await copyFile(join(repositoryRoot, 'LICENSE'), join(pluginRoot, 'LICENSE'));
 await rm(join(runtimeRoot, 'instructions'), { recursive: true, force: true });
 await cp(join(repositoryRoot, 'instructions'), join(runtimeRoot, 'instructions'), { recursive: true });
 
-const packages = new Set(Object.keys(result.metafile.inputs)
-  .filter((path) => path.startsWith('node_modules/'))
-  .map((path) => {
-    const segments = path.split('/').slice(1);
-    return segments[0].startsWith('@') ? segments.slice(0, 2).join('/') : segments[0];
-  }));
-const notices = [];
-for (const name of [...packages].sort()) {
-  const packageRoot = join(repositoryRoot, 'node_modules', name);
+// Each bundled file belongs to the package after its last node_modules segment, so nested copies keep their own version and license,
+// and builds from a worktree (whose dependencies resolve from a parent folder) still find every package.
+const packageRoots = new Set();
+for (const input of Object.keys(result.metafile.inputs)) {
+  const segments = input.split('/');
+  const index = segments.lastIndexOf('node_modules');
+  if (index === -1 || index + 1 >= segments.length) continue;
+  packageRoots.add(resolve(repositoryRoot, segments.slice(0, index + (segments[index + 1].startsWith('@') ? 3 : 2)).join('/')));
+}
+const packages = new Map();
+for (const packageRoot of packageRoots) {
   const metadata = JSON.parse(await readFile(join(packageRoot, 'package.json'), 'utf8'));
+  const key = `${metadata.name}@${metadata.version}`;
+  if (!packages.has(key)) packages.set(key, { metadata, packageRoot });
+}
+const notices = [];
+for (const [, { metadata, packageRoot }] of [...packages].sort(([left], [right]) => left.localeCompare(right))) {
   let licenseText;
   for (const filename of ['LICENSE', 'LICENSE.md', 'LICENSE.txt', 'LICENSE-MIT', 'license', 'license.md', 'license.txt']) {
     try {
@@ -73,7 +80,7 @@ for (const name of [...packages].sort()) {
   if (!licenseText && metadata.repository?.url === 'git+https://github.com/sapphiredev/utilities.git') {
     licenseText = await readFile(join(repositoryRoot, 'scripts', 'third-party-licenses', 'sapphire-utilities.txt'), 'utf8');
   }
-  if (!licenseText) throw new Error(`Missing license text for bundled dependency ${name}`);
+  if (!licenseText) throw new Error(`Missing license text for bundled dependency ${metadata.name}`);
   notices.push(`${metadata.name} ${metadata.version}\n${licenseText.trim()}`);
 }
 await writeFile(join(runtimeRoot, 'THIRD_PARTY_NOTICES.txt'), notices.join('\n\n---\n\n') + '\n');
