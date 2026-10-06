@@ -10,6 +10,16 @@ here instead of in code.
 
 ## Rules
 
+Nova's personality (`02-voice-and-formatting.md`) and operating habits
+(`05-working-practices.md`) adapt OpenClaw's
+[SOUL.md](https://github.com/openclaw/openclaw/blob/493b90b2ba91d6d70e7b6784e475ff15f0aa891c/docs/reference/templates/SOUL.md),
+[AGENTS.md](https://github.com/openclaw/openclaw/blob/493b90b2ba91d6d70e7b6784e475ff15f0aa891c/docs/reference/templates/AGENTS.md)
+and prompt builder. They retain Nova's owner-only scope, explicit-command-only
+memory, approved host actions, JSON reply plan and established Discord formatting.
+OpenClaw's autonomous memory writes, unsolicited checks and unavailable tools are
+excluded. Attribution and the upstream MIT license ship in `_OPENCLAW-LICENSE.md`,
+which is not loaded as a prompt.
+
 - **Combining:** every `.md` file in `nova/` is joined in file-name order. The
   numeric prefixes set that order, so to add a topic you can drop in a new file
   such as `05-something.md`. This README and files starting with `_` are
