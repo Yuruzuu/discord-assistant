@@ -3,13 +3,15 @@ import { forwardResolvedMessage, markSendStatus, sendResolvedMessage } from '../
 import { normalizeReactionEmoji } from '../reactions.mjs';
 import { splitDiscordText, validateGeneratedFiles } from './discord-chunks.mjs';
 import { shapeMessage } from '../shapes.mjs';
+import { createDecorationQueue } from './progress.mjs';
 
-export function createReplySender(service, { guildId, channelId, listenerId, directMessages = false, deliveryJournal, progressComponents, messageComponents, forwardSource = async () => { throw new Error('Forwarding is unavailable in this conversation'); }, sharedImage = () => null, sendTarget = async () => { throw new Error('Posting in other channels is unavailable in this conversation'); } }) {
+export function createReplySender(service, { guildId, channelId, listenerId, directMessages = false, deliveryJournal, progressComponents, messageComponents, statusTimeoutMs = 2000, forwardSource = async () => { throw new Error('Forwarding is unavailable in this conversation'); }, sharedImage = () => null, sendTarget = async () => { throw new Error('Posting in other channels is unavailable in this conversation'); } }) {
   let currentTrigger;
   let resolution;
   const temporaryReactions = new Map();
   const naturalReactions = new Set();
-  let reactionQueue = Promise.resolve();
+  const statusQueues = new Map();
+  const statusMutations = new Map();
   const componentCards = new Set();
   const firstReplies = new Map();
 
@@ -195,6 +197,29 @@ export function createReplySender(service, { guildId, channelId, listenerId, dir
     });
   };
 
+  function statusQueueFor(messageId) {
+    if (!statusQueues.has(messageId)) {
+      if (statusQueues.size >= 64) {
+        const oldest = statusQueues.keys().next().value;
+        statusQueues.get(oldest).close(); statusQueues.delete(oldest); temporaryReactions.delete(oldest);
+        for (const [key, mutation] of statusMutations) if (key.startsWith(`${oldest}:`)) { mutation.cancellation.abort(); statusMutations.delete(key); }
+      }
+      statusQueues.set(messageId, createDecorationQueue({ timeoutMs: statusTimeoutMs, maxPending: 1 }));
+    }
+    return statusQueues.get(messageId);
+  }
+
+  async function statusMutation(messageId, emoji, operation, signal) {
+    const key = `${messageId}:${emoji}`;
+    if (naturalReactions.has(key)) return;
+    const cancellation = new AbortController();
+    const deliverySignal = AbortSignal.any([cancellation.signal, signal].filter(Boolean));
+    const mutation = { cancellation, promise: Promise.resolve().then(() => { deliverySignal.throwIfAborted(); if (!naturalReactions.has(key)) return operation(deliverySignal); }) };
+    statusMutations.set(key, mutation);
+    try { await mutation.promise; }
+    finally { if (statusMutations.get(key) === mutation) statusMutations.delete(key); }
+  }
+
   async function updateStatusReaction(stage, trigger, signal) {
     const emoji = { queued: '⏳', working: '⚙️', tool: '🔎', done: '✅', error: '⚠️', stalled: '⌛' }[stage];
     signal?.throwIfAborted();
@@ -202,32 +227,46 @@ export function createReplySender(service, { guildId, channelId, listenerId, dir
     if (!target.account.client.removeOwnReaction) return;
     const previous = temporaryReactions.get(trigger.id);
     if (previous === emoji) return;
-    if (previous) await target.account.client.removeOwnReaction(channelId, trigger.id, previous, { signal });
+    if (previous) await statusMutation(trigger.id, previous, (deliverySignal) => target.account.client.removeOwnReaction(channelId, trigger.id, previous, { signal: deliverySignal }), signal);
     temporaryReactions.delete(trigger.id);
     if (emoji) {
       if (naturalReactions.has(`${trigger.id}:${emoji}`) || trigger.reactions?.some((reaction) => reaction.me && reaction.emoji?.name === emoji)) return;
-      await target.account.client.addReaction(channelId, trigger.id, emoji, { signal });
-      temporaryReactions.set(trigger.id, emoji);
+      await statusMutation(trigger.id, emoji, (deliverySignal) => target.account.client.addReaction(channelId, trigger.id, emoji, { signal: deliverySignal }), signal);
+      if (!signal?.aborted && !naturalReactions.has(`${trigger.id}:${emoji}`)) temporaryReactions.set(trigger.id, emoji);
     }
   }
   send.statusReaction = (stage, trigger, signal) => {
-    const operation = reactionQueue.catch(() => {}).then(() => updateStatusReaction(stage, trigger, signal));
-    reactionQueue = operation;
-    return operation;
+    return statusQueueFor(trigger.id).enqueue('status', (queueSignal) => updateStatusReaction(stage, trigger, AbortSignal.any([queueSignal, signal].filter(Boolean))));
   };
   send.clearStatusReactions = async () => {
-    await reactionQueue.catch(() => {});
-    for (const messageId of [...temporaryReactions.keys()]) await send.statusReaction(undefined, { id: messageId });
+    await Promise.all([...statusQueues.keys()].map((messageId) => send.statusReaction(undefined, { id: messageId })));
   };
 
   send.react = async (reaction, trigger, signal) => {
     signal?.throwIfAborted();
-    await reactionQueue.catch(() => {});
     const target = await resolve(trigger);
     signal?.throwIfAborted();
     const emoji = normalizeReactionEmoji(reaction.emoji);
+    const key = `${reaction.messageId}:${emoji}`;
+    // Reserve ownership before waiting for an in-flight delete of this exact emoji.
+    // Different status emojis/messages cannot delay an authorized natural reaction.
+    naturalReactions.add(key);
+    if (naturalReactions.size > 1000) naturalReactions.delete(naturalReactions.values().next().value);
+    const mutation = statusMutations.get(key);
+    if (mutation) {
+      mutation.cancellation.abort();
+      let timer;
+      let onAbort;
+      try {
+        await Promise.race([
+          mutation.promise.catch(() => {}),
+          new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('Temporary reaction outcome is unsettled; natural reaction was not sent')), statusTimeoutMs); }),
+          new Promise((_, reject) => { onAbort = () => reject(signal.reason); signal?.addEventListener('abort', onAbort, { once: true }); if (signal?.aborted) onAbort(); }),
+        ]);
+      } finally { clearTimeout(timer); signal?.removeEventListener('abort', onAbort); }
+    }
+    signal?.throwIfAborted();
     await target.account.client.addReaction(channelId, reaction.messageId, emoji, { signal });
-    naturalReactions.add(`${reaction.messageId}:${emoji}`);
     if (naturalReactions.size > 1000) naturalReactions.delete(naturalReactions.values().next().value);
     if (temporaryReactions.get(reaction.messageId) === emoji) temporaryReactions.delete(reaction.messageId);
     return { messageId: reaction.messageId, reacted: true };

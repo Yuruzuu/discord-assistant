@@ -10,11 +10,11 @@ import { ensureStateRoot, listenerTargetPaths, readState, writeState, proactiveR
 import { assertOwnerDirectMessageChannel, directMessageOwnerId } from './target.mjs';
 import { replyDefaults } from './reply-defaults.mjs';
 
-async function controlRequest(configuration, method = 'GET', route = '/status', body) {
+async function controlRequest(configuration, method = 'GET', route = '/status', body, timeoutMs = body ? 20000 : 3000) {
   const url = new URL(configuration.controlUrl);
   if (url.protocol !== 'http:' || url.hostname !== '127.0.0.1') throw new Error('Invalid listener control address');
   const response = await fetch(new URL(route, url), {
-    method, headers: { Authorization: `Bearer ${configuration.controlToken}`, ...(body ? { 'Content-Type': 'application/json' } : {}) }, ...(body ? { body: JSON.stringify(body) } : {}), signal: AbortSignal.timeout(body ? 20000 : 3000), redirect: 'error',
+    method, headers: { Authorization: `Bearer ${configuration.controlToken}`, ...(body ? { 'Content-Type': 'application/json' } : {}) }, ...(body ? { body: JSON.stringify(body) } : {}), signal: AbortSignal.timeout(Math.max(1, Math.ceil(timeoutMs))), redirect: 'error',
   });
   if (!response.ok) throw new Error(`Listener control request failed (${response.status})`);
   const status = await response.json();
@@ -23,13 +23,16 @@ async function controlRequest(configuration, method = 'GET', route = '/status', 
   return status;
 }
 
-export function createProactiveController(service, { entrypoint = process.env.DISCORD_PROACTIVE_ENTRYPOINT || service.proactiveEntrypoint, root = proactiveRoot(), spawnImpl = spawn, commandCheck = spawnSync } = {}) {
+export function createProactiveController(service, { entrypoint = process.env.DISCORD_PROACTIVE_ENTRYPOINT || service.proactiveEntrypoint, root = proactiveRoot(), spawnImpl = spawn, commandCheck = spawnSync, shutdownTimeoutMs = 10000, shutdownPollMs = 50, processExistsImpl } = {}) {
+  for (const value of [shutdownTimeoutMs, shutdownPollMs]) if (!Number.isInteger(value) || value < 1 || value > 60000) throw new Error('Shutdown deadlines must be bounded positive milliseconds');
+  const stops = new Map();
   function accountForId(accountId) { return accountId ? service.accountById(accountId) : service.accounts[0]; }
   function targetPaths(accountId, channelId, directMessages, allServers) {
     return listenerTargetPaths({ accountId, channelId, directMessages, allServers }, root);
   }
   function processExists(pid) {
     if (!Number.isSafeInteger(pid) || pid < 1) return false;
+    if (processExistsImpl) return Boolean(processExistsImpl(pid));
     try { process.kill(pid, 0); return true; } catch (error) { return error.code !== 'ESRCH'; }
   }
 
@@ -41,8 +44,12 @@ export function createProactiveController(service, { entrypoint = process.env.DI
     if (!configuration) return { running: false, state: 'not-started', accountId: account.id, channelId, ownerUserId: directMessageOwnerId, ...(directMessages ? { directMessages: true } : {}), ...(allServers ? { allServers: true } : {}) };
     const saved = await readState(paths.status);
     const supervision = await readState(`${paths.configuration}.supervision.json`);
-    const supervising = supervision?.enabled && processExists(supervision.pid);
+    const supervisorAlive = processExists(supervision?.pid);
+    const supervising = supervision?.enabled && supervisorAlive;
     const pid = configuration.pid || saved?.pid;
+    if (stops.has(paths.configuration) || (supervisorAlive && supervision.enabled === false) || (processExists(pid) && ['stopping', 'stopped'].includes(saved?.state))) {
+      return { ...(saved || {}), listenerId: configuration.listenerId, running: false, state: 'stopping', shutdownPending: true };
+    }
     if (pid && !processExists(pid)) return { ...(saved || {}), running: Boolean(supervising), state: supervising ? 'recovering' : saved?.state === 'failed' ? 'failed' : 'stopped', ...(supervising ? { supervision } : {}) };
     if (!configuration.controlUrl) return { ...(saved || {}), running: false, state: saved?.state || 'starting' };
     try { return await controlRequest(configuration); }
@@ -75,13 +82,14 @@ export function createProactiveController(service, { entrypoint = process.env.DI
     finally { await lock.close(); await rm(lockPath, { force: true }); }
   }
 
-  async function startUnlocked({ guildId, channelId, accountId, directMessages = false, allServers = false, mode = 'mentions', model = replyDefaults.model, reasoningEffort = replyDefaults.reasoningEffort, serviceTier = replyDefaults.serviceTier, batchWindowMs = 1500, cooldownMs = 5000, maxRepliesPerMinute = 6, gifUrls = [] }) {
+  async function startUnlocked({ guildId, channelId, accountId, directMessages = false, allServers = false, mode = 'mentions', model = replyDefaults.model, reasoningEffort = replyDefaults.reasoningEffort, serviceTier = replyDefaults.serviceTier, batchWindowMs = 500, cooldownMs = 5000, maxRepliesPerMinute = 6, gifUrls = [] }) {
     if (!directMessages && !allServers) {
       assertSnowflake(guildId, 'guildId');
       assertSnowflake(channelId, 'channelId');
     }
     const account = accountForId(accountId);
     const current = await status({ channelId, accountId: account.id, directMessages, allServers });
+    if (current.state === 'stopping') throw new Error('The existing listener is still stopping. Wait for shutdown before starting it again.');
     if (current.state === 'unreachable') throw new Error('The existing listener cannot be verified. Check its status before starting another instance.');
     if (current.running) return { ...current, alreadyRunning: true };
     if (!entrypoint) throw new Error('The proactive server entry point is not configured; update the Discord plugin');
@@ -162,7 +170,7 @@ export function createProactiveController(service, { entrypoint = process.env.DI
   async function assertNoOverlappingListener(accountId, allServers) {
     if (!allServers) {
       const broad = await status({ accountId, allServers: true });
-      if (broad.running || ['starting', 'unreachable'].includes(broad.state)) throw new Error('All-server mentions are active; stop them before starting a channel listener');
+      if (broad.running || ['starting', 'stopping', 'unreachable'].includes(broad.state)) throw new Error('All-server mentions are active; stop them before starting a channel listener');
       return;
     }
     for (const filename of await readdir(root)) {
@@ -170,7 +178,7 @@ export function createProactiveController(service, { entrypoint = process.env.DI
       const configuration = await readState(join(root, filename));
       if (!configuration || configuration.accountId !== accountId || configuration.directMessages || configuration.allServers) continue;
       const channel = await status({ accountId, channelId: configuration.channelId });
-      if (channel.running || ['starting', 'unreachable'].includes(channel.state)) throw new Error('Stop active channel listeners before enabling all-server mentions');
+      if (channel.running || ['starting', 'stopping', 'unreachable'].includes(channel.state)) throw new Error('Stop active channel listeners before enabling all-server mentions');
     }
   }
 
@@ -178,25 +186,45 @@ export function createProactiveController(service, { entrypoint = process.env.DI
     if (!directMessages && !allServers) assertSnowflake(channelId, 'channelId');
     const account = accountForId(accountId);
     const paths = targetPaths(account.id, channelId, directMessages, allServers);
+    if (stops.has(paths.configuration)) return stops.get(paths.configuration);
+    const operation = stopUnlocked(paths, { channelId, accountId: account.id, directMessages, allServers }).finally(() => stops.delete(paths.configuration));
+    stops.set(paths.configuration, operation);
+    return operation;
+  }
+
+  async function stopUnlocked(paths, target) {
+    const deadlineAt = Date.now() + shutdownTimeoutMs;
     const configuration = await readState(paths.configuration);
+    const saved = await readState(paths.status);
     const supervision = await readState(`${paths.configuration}.supervision.json`);
+    const registeredPids = new Set([configuration?.pid, saved?.listenerId === configuration?.listenerId ? saved?.pid : undefined, supervision?.pid].filter((pid) => Number.isSafeInteger(pid) && pid > 0));
+    const alive = () => [...registeredPids].some(processExists);
     if (supervision) await writeState(`${paths.configuration}.supervision.json`, { ...supervision, enabled: false });
-    if (!configuration?.controlUrl) {
-      if (supervision?.pid && processExists(supervision.pid)) {
-        for (let attempt = 0; attempt < 40 && processExists(supervision.pid); attempt += 1) await wait(250);
-        if (processExists(supervision.pid)) throw new Error('Supervisor shutdown is still in progress');
-        return { running: false, state: 'stopped', ownerUserId: directMessageOwnerId };
+    if (!alive() && (registeredPids.size || !configuration?.controlUrl)) {
+      if (!registeredPids.size && saved?.state === 'starting') throw new Error('The listener is still starting; retry stop shortly');
+      return { ...(saved || {}), ...target, listenerId: configuration?.listenerId, running: false, state: configuration ? 'stopped' : 'not-started', ownerUserId: directMessageOwnerId, alreadyStopped: true };
+    }
+    let result = { ...(saved || {}), ...target, listenerId: configuration?.listenerId, ownerUserId: directMessageOwnerId, running: false, state: 'stopping', shutdownPending: true };
+    if (configuration?.listenerId) await writeState(paths.status, result);
+    if (configuration?.controlUrl) {
+      try { result = { ...result, ...await controlRequest(configuration, 'POST', '/stop', undefined, Math.min(3000, deadlineAt - Date.now())), running: false, state: 'stopping', shutdownPending: true }; }
+      catch (error) { result.lastError = `Listener shutdown remains unconfirmed: ${error.message}`; }
+    }
+    do {
+      const latest = await readState(paths.configuration);
+      const latestStatus = await readState(paths.status);
+      const latestSupervision = await readState(`${paths.configuration}.supervision.json`);
+      if (latest && latest.listenerId !== configuration?.listenerId) return { ...result, lastError: 'Listener identity changed during shutdown' };
+      for (const pid of [latest?.pid, latestStatus?.listenerId === configuration?.listenerId ? latestStatus?.pid : undefined, latestSupervision?.pid]) if (Number.isSafeInteger(pid) && pid > 0) registeredPids.add(pid);
+      if (registeredPids.size && !alive()) {
+        const stopped = { ...result, state: 'stopped', shutdownPending: false, stoppedAt: new Date().toISOString() };
+        if (latestStatus?.listenerId === configuration?.listenerId) await writeState(paths.status, stopped);
+        return stopped;
       }
-      const current = await status({ channelId, accountId: account.id, directMessages, allServers });
-      if (current.state === 'starting') throw new Error('The listener is still starting; retry stop shortly');
-      return { ...current, alreadyStopped: true };
-    }
-    try { return await controlRequest(configuration, 'POST', '/stop'); }
-    catch (error) {
-      const current = await status({ channelId, accountId: account.id, directMessages, allServers });
-      if (current.running || current.state === 'unreachable') throw new Error(`Listener stop could not be confirmed: ${error.message}`);
-      return { ...current, alreadyStopped: true };
-    }
+      if (Date.now() >= deadlineAt) break;
+      await wait(Math.min(shutdownPollMs, deadlineAt - Date.now()));
+    } while (Date.now() < deadlineAt);
+    return result;
   }
 
   async function control({ channelId, accountId, directMessages = false, allServers = false, ...request }) {

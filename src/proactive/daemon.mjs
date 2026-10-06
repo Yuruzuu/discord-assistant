@@ -55,6 +55,7 @@ async function main() {
   let shuttingDown = false;
 
   function updateState(patch) {
+    if (shuttingDown) patch = { ...patch, running: false, state: patch.state === 'stopped' || state.state === 'stopped' ? 'stopped' : 'stopping' };
     state = { ...state, ...patch };
     if (patch.state !== undefined || patch.running !== undefined) return stateWriter.flush(state);
     stateWriter.schedule(state);
@@ -62,7 +63,7 @@ async function main() {
   }
 
   function status() {
-    return { ...state, ...runtime?.status(), gateway: gateway?.status(), ...(configuration.allServers ? { watchedGuildCount: gateway?.guildCount() || 0, researchJobs: jobs?.list() || [] } : {}) };
+    return { ...state, ...runtime?.status(), gateway: gateway?.status(), ...(configuration.allServers ? { watchedGuildCount: gateway?.guildCount() || 0, researchJobs: jobs?.list() || [] } : {}), ...(shuttingDown ? { running: false, state: state.state === 'stopped' ? 'stopped' : 'stopping' } : {}) };
   }
 
   function errorMessage(error) {
@@ -72,6 +73,7 @@ async function main() {
   async function shutdown() {
     if (shuttingDown) return;
     shuttingDown = true;
+    await updateState({ running: false, state: 'stopping' }).catch(() => {});
     await gateway?.close();
     await digests?.close();
     await jobs?.close();

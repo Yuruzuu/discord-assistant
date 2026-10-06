@@ -363,3 +363,58 @@ test('final bubbles stay counted when a later delivery step fails, and failed po
     assert.equal(second.engine.status().sentMessages, 2, 'the bubble and the host confirmation, not the post elsewhere');
   } finally { second.engine.stop(); }
 });
+
+test('slow status reactions and progress never block generation or confirmed reply delivery', async () => {
+  const operations = [];
+  let releaseProgress;
+  const progressBlocked = new Promise((resolve) => { releaseProgress = resolve; });
+  const sendReplies = async () => { operations.push('reply'); return { sentMessages: [{ content: 'answer' }] }; };
+  sendReplies.statusReaction = async (_stage, _message, signal) => {
+    operations.push('reaction');
+    await new Promise((resolve) => { if (signal.aborted) resolve(); else signal.addEventListener('abort', resolve, { once: true }); });
+  };
+  sendReplies.progress = async (_content, _trigger, signal) => {
+    operations.push('progress');
+    await Promise.race([progressBlocked, new Promise((resolve) => signal.addEventListener('abort', resolve, { once: true }))]);
+    signal.throwIfAborted();
+  };
+  const { engine } = fixture({ sendReplies, generateReply: async (_, signal, { onProgress }) => {
+    operations.push('generation');
+    await onProgress({ toolName: 'discord_search_messages', stage: 'started' }, signal);
+    operations.push('tool');
+    await onProgress({ toolName: 'discord_search_messages', stage: 'completed', resultCount: 1 }, signal);
+    return { shouldReply: true, messages: [{ content: 'answer' }] };
+  } });
+  try {
+    await engine.receive(message({ mentions: [{ id: botUserId }] }));
+    await until(() => operations.includes('reply'));
+    assert.ok(operations.includes('tool'));
+    releaseProgress();
+    await engine.idle();
+    assert.equal(engine.status().sentMessages, 1);
+    assert.equal(engine.status().errors, 0);
+  } finally { engine.stop(); }
+});
+
+test('cancelling a turn waiting for shared admission marks it cancelled without starting the model', async () => {
+  const completed = [];
+  let queuedSignal;
+  const { engine, generations } = fixture({
+    scheduleReply: (_operation, signal, metadata) => new Promise((_, reject) => {
+      assert.equal(metadata.conversationKey, `${guildId}:${channelId}`);
+      queuedSignal = signal;
+      signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+    }),
+    onBatchComplete: async (messages, outcome) => { completed.push({ id: messages.at(-1).id, outcome }); },
+  });
+  try {
+    const incoming = message({ mentions: [{ id: botUserId }] });
+    await engine.receive(incoming);
+    await until(() => !!queuedSignal);
+    await engine.control({ action: 'stop', userId: directMessageOwnerId });
+    await engine.idle();
+    assert.equal(queuedSignal.aborted, true);
+    assert.equal(generations.length, 0);
+    assert.deepEqual(completed, [{ id: incoming.id, outcome: 'cancelled' }]);
+  } finally { engine.stop(); }
+});

@@ -10,7 +10,7 @@ export function registerProactiveTools(server, service, controller = createProac
   const replyOptions = {
     model: z.string().max(128).default(replyDefaults.model), reasoningEffort: z.enum(['low', 'medium', 'high']).default(replyDefaults.reasoningEffort),
     serviceTier: z.enum(['priority', 'default']).default(replyDefaults.serviceTier).describe('priority selects Fast mode; default selects Standard mode'),
-    batchWindowMs: z.number().int().min(250).max(5000).default(1500),
+    batchWindowMs: z.number().int().min(250).max(5000).default(500),
     cooldownMs: z.number().int().min(0).max(60000).default(5000),
     maxRepliesPerMinute: z.number().int().min(1).max(60).default(6),
     gifUrls: z.array(z.string().url().max(2048)).max(10).default([]).describe('Optional existing HTTPS GIF links the bot may use'),

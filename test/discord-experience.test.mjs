@@ -152,3 +152,57 @@ test('owner controls cancel a single answer without stopping listening, pause re
   await until(() => generations === 2);
   engine.stop();
 });
+
+test('a slow temporary status on another emoji cannot hold an authorized reaction or final reply', async () => {
+  const { send, client, calls } = senderFixture({ statusTimeoutMs: 25 });
+  let release;
+  const blocked = new Promise((resolve) => { release = resolve; });
+  client.addReaction = async (_, id, emoji) => { calls.push({ kind: 'add', id, emoji }); if (emoji === '⏳') await blocked; };
+  const status = send.statusReaction('queued', trigger);
+  await until(() => calls.some((call) => call.emoji === '⏳'));
+  await send.react({ messageId: trigger.id, emoji: '👍' }, trigger);
+  await send([{ content: 'ready' }], trigger);
+  assert.ok(calls.some((call) => call.emoji === '👍'));
+  assert.ok(calls.some((call) => call.kind === 'send'));
+  await status;
+  const newer = { ...trigger, id: '300000000000000002' };
+  await send.statusReaction('working', newer);
+  assert.ok(calls.some((call) => call.id === newer.id && call.emoji === '⚙️'), 'quarantine affects only the old message');
+  release();
+  await send.clearStatusReactions();
+  assert.ok(!calls.some((call) => call.kind === 'remove' && call.emoji === '👍'));
+});
+
+test('a natural reaction waits for its exact in-flight status deletion then owns that emoji', async () => {
+  const { send, client, calls } = senderFixture({ statusTimeoutMs: 100 });
+  await send.statusReaction('working', trigger);
+  let release;
+  let deleting = false;
+  const blocked = new Promise((resolve) => { release = resolve; });
+  client.removeOwnReaction = async (_, id, emoji) => { deleting = true; await blocked; calls.push({ kind: 'remove', id, emoji }); };
+  const status = send.statusReaction('done', trigger);
+  await until(() => deleting);
+  const natural = send.react({ messageId: trigger.id, emoji: '⚙️' }, trigger);
+  await wait(5);
+  assert.equal(calls.filter((call) => call.kind === 'add' && call.emoji === '⚙️').length, 1, 'never add before the old deletion settles');
+  release();
+  await Promise.all([status, natural]);
+  await send.clearStatusReactions();
+  const lastOwnMutation = calls.filter((call) => call.emoji === '⚙️').at(-1);
+  assert.equal(lastOwnMutation.kind, 'add', 'late cleanup cannot remove the natural reaction');
+});
+
+test('unsettled deletion surfaces a bounded natural-reaction failure instead of racing a late delete', async () => {
+  const { send, client, calls } = senderFixture({ statusTimeoutMs: 15 });
+  await send.statusReaction('working', trigger);
+  let release;
+  let deleting = false;
+  const blocked = new Promise((resolve) => { release = resolve; });
+  client.removeOwnReaction = async () => { deleting = true; await blocked; };
+  const status = send.statusReaction('done', trigger);
+  await until(() => deleting);
+  await assert.rejects(send.react({ messageId: trigger.id, emoji: '⚙️' }, trigger), /outcome is unsettled/);
+  assert.equal(calls.filter((call) => call.kind === 'add' && call.emoji === '⚙️').length, 1);
+  release();
+  await status;
+});

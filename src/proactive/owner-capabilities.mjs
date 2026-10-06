@@ -47,7 +47,7 @@ export async function createOwnerCapabilities({ service, accountId, channelId, s
         onProgress: async (event) => {
           if (event.channelId !== channelId) return;
           const stage = ['completed', 'succeeded'].includes(event.state) ? 'completed' : ['failed', 'interrupted', 'cancelled'].includes(event.state) ? 'failed' : 'started';
-          await reporter(event.taskId).receive({ stage, toolName: 'task_command', callId: event.itemId, arguments: { command: sanitizeCommand(event.command) } });
+          void reporter(event.taskId).receive({ stage, toolName: 'task_command', callId: event.itemId, arguments: { command: sanitizeCommand(event.command) } }).catch(onError);
         },
         onApproval: async (approval) => {
           if (approval.channelId !== channelId) return;

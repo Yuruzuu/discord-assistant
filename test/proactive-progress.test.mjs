@@ -279,3 +279,47 @@ test('traces show only safe argument previews and disappear after failure or can
     assert.match(lines.at(-1), ending === 'failed' ? /stopped before it finished/ : /Stopped this answer/);
   }
 });
+
+test('slow progress delivery coalesces hundreds of events without delaying their factual ingestion', async () => {
+  let release;
+  const blocked = new Promise((resolve) => { release = resolve; });
+  const lines = [];
+  const progress = createProgressReporter({ intervalMs: 0,
+    send: async (content) => { lines.push(content); await blocked; return { sentMessages: [{ message: { id: 'message' } }] }; },
+    edit: async (_, content) => { lines.push(content); } });
+  const sending = progress.receive({ stage: 'started', toolName: 'task_command', callId: 'initial', arguments: { command: 'git status --short' } });
+  for (let index = 0; index < 200; index += 1) {
+    void progress.receive({ stage: 'started', toolName: 'project_search', callId: String(index), arguments: { query: `query${index}` } });
+    void progress.receive({ stage: 'completed', toolName: 'project_search', callId: String(index), resultCount: 2 });
+  }
+  assert.equal(lines.length, 1, 'only one REST mutation is active');
+  assert.equal(progress.details().length, 50, 'ingestion stays current and bounded behind a slow send');
+  assert.equal(progress.details().at(-1).stage, 'completed');
+  release();
+  await sending;
+  await progress.idle();
+  assert.equal(lines.length, 2, 'pending edits collapse into one latest snapshot');
+  assert.match(lines.at(-1), /query199/);
+  await progress.finish();
+  assert.ok(!lines.at(-1).includes('```'));
+});
+
+test('finish is bounded for an uncooperative REST send and suppresses stale queued edits', async () => {
+  let release;
+  const blocked = new Promise((resolve) => { release = resolve; });
+  const lines = [];
+  const signals = [];
+  const progress = createProgressReporter({ intervalMs: 0, deliveryTimeoutMs: 40, finishTimeoutMs: 10,
+    send: async (content, signal) => { lines.push(content); signals.push(signal); await blocked; return { sentMessages: [{ message: { id: 'message' } }] }; },
+    edit: async (_, content) => { lines.push(content); } });
+  void progress.receive({ stage: 'started', toolName: 'project_search' });
+  void progress.receive({ stage: 'completed', toolName: 'project_search', resultCount: 1 });
+  const startedAt = Date.now();
+  await progress.finish({ cancelled: true });
+  assert.ok(Date.now() - startedAt < 200, 'finish cannot wait forever for ignored cancellation');
+  assert.equal(signals[0].aborted, true);
+  release();
+  await wait(5);
+  await progress.receive({ stage: 'started', toolName: 'discord_list_servers' });
+  assert.equal(lines.length, 1, 'nothing edits a late receipt after the queue timed out');
+});

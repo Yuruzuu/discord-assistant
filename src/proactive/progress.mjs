@@ -111,10 +111,68 @@ function summarize(entries) {
 }
 const failedText = (activity) => (activity.category === 'search' ? 'That search didn’t go through, so I don’t have those results yet.' : 'That lookup didn’t work, so I don’t have those results yet.');
 
-export function createProgressReporter({ send, edit, remove, signal, now = Date.now, intervalMs = 1500, maxMessages = 3, onSent = () => {}, onError = () => {} }) {
+// Presentation has one active mutation and bounded, replaceable pending states. A timed-out
+// mutation poisons the queue: a late REST result must never race a newer edit.
+export function createDecorationQueue({ signal, timeoutMs = 2000, maxPending = 32, onError = () => {} } = {}) {
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0 || !Number.isSafeInteger(maxPending) || maxPending < 1) throw new Error('Invalid decoration queue limits');
+  const cancellation = new AbortController();
+  const pending = new Map();
+  let running;
+  let closed = false;
+  let poisoned = false;
+  let activeCancellation;
+  const reportError = (error) => { try { onError(error); } catch {} };
+
+  async function deliver(operation, parentSignal = signal, limit = timeoutMs) {
+    const local = new AbortController();
+    activeCancellation = local;
+    const deliverySignal = AbortSignal.any([local.signal, parentSignal].filter(Boolean));
+    let timer;
+    try {
+      deliverySignal.throwIfAborted();
+      await Promise.race([
+        Promise.resolve(operation(deliverySignal)),
+        new Promise((_, reject) => { timer = setTimeout(() => { poisoned = true; local.abort(); reject(new Error('Nova decoration delivery timed out')); }, limit); }),
+      ]);
+    } catch (error) { if (!deliverySignal.aborted || poisoned) reportError(error); }
+    finally { clearTimeout(timer); if (activeCancellation === local) activeCancellation = undefined; }
+  }
+
+  function start() {
+    if (!running) {
+      running = (async () => {
+        while (pending.size && !closed && !poisoned && !signal?.aborted) {
+          const [key, next] = pending.entries().next().value;
+          pending.delete(key);
+          await deliver(next, AbortSignal.any([cancellation.signal, signal].filter(Boolean)));
+        }
+      })().finally(() => { running = undefined; if (closed || poisoned) pending.clear(); else if (pending.size) start(); });
+    }
+  }
+  function enqueue(key, operation) {
+    if (closed || poisoned || signal?.aborted) return Promise.resolve();
+    if (!pending.has(key) && pending.size >= maxPending) pending.delete(pending.keys().next().value);
+    pending.set(key, operation);
+    start();
+    return running;
+  }
+
+  function close() { closed = true; pending.clear(); cancellation.abort(); activeCancellation?.abort(); }
+  async function settle(timeout = 1000) {
+    if (!running) return !poisoned;
+    let timer;
+    const settled = await Promise.race([running.then(() => true), new Promise((resolve) => { timer = setTimeout(() => resolve(false), timeout); })]);
+    clearTimeout(timer);
+    if (!settled) { poisoned = true; activeCancellation?.abort(); }
+    return settled && !poisoned;
+  }
+  return { enqueue, close, settle, idle: () => running || Promise.resolve(), final: async (operation, finalSignal, timeout = 1000) => { close(); if (await settle(timeout)) await deliver(operation, finalSignal, timeout); } };
+}
+
+export function createProgressReporter({ send, edit, remove, signal, now = Date.now, intervalMs = 1500, maxMessages = 3, deliveryTimeoutMs = 2000, finishTimeoutMs = 1000, onSent = () => {}, onError = () => {} }) {
   const cancellation = new AbortController();
   const startedAt = new Map();
-  let queued = Promise.resolve();
+  const delivery = createDecorationQueue({ signal, timeoutMs: deliveryTimeoutMs, maxPending: maxMessages, onError });
   let attempted = 0;
   let closed = false;
   const details = [];
@@ -161,16 +219,16 @@ export function createProgressReporter({ send, edit, remove, signal, now = Date.
     if (content === displayed || (!receipt && attempted >= maxMessages)) return;
     await attempt(deliverySignal, async (sendSignal) => {
       if (receipt) await edit(receipt, content, sendSignal);
-      else { attempted += 1; receipt = await send(content, sendSignal, 0); onSent(receipt); }
-      displayed = content;
-      lastEditAt = now();
+      else { attempted += 1; receipt = await send(content, sendSignal, 0); if (!sendSignal.aborted && !closed) onSent(receipt); }
+      if (!sendSignal.aborted) { displayed = content; lastEditAt = now(); }
     });
   }
 
   async function logStep(event, timestamp, resultCount, deliverySignal) {
     const timingKey = event.callId || event.toolName;
-    if (event.stage === 'started') startedAt.set(timingKey, timestamp);
+    if (event.stage === 'started') { startedAt.set(timingKey, timestamp); if (startedAt.size > 120) startedAt.delete(startedAt.keys().next().value); }
     const elapsedMs = Math.max(0, timestamp - (startedAt.get(timingKey) ?? timestamp));
+    if (event.stage !== 'started') startedAt.delete(timingKey);
     details.push({ toolName: event.toolName, stage: event.stage, elapsedMs, ...(resultCount === undefined ? {} : { resultCount }) });
     if (details.length > 50) details.shift();
     if (event.stage === 'started') entries.push({ callId: event.callId || null, toolName: event.toolName, args: event.arguments, stage: 'started' });
@@ -178,16 +236,16 @@ export function createProgressReporter({ send, edit, remove, signal, now = Date.
       const entry = entries.find((item) => item.stage === 'started' && item.toolName === event.toolName && (event.callId ? item.callId === event.callId : !item.callId))
         || entries.find((item) => item.stage === 'started' && item.toolName === event.toolName);
       const stage = event.stage === 'completed' ? 'done' : 'failed';
-      if (entry) Object.assign(entry, { stage, count: resultCount, args: event.arguments ?? entry.args });
+      if (entry) Object.assign(entry, { stage, count: resultCount, args: event.argumentsProvided ? event.arguments : entry.args });
       else entries.push({ callId: event.callId || null, toolName: event.toolName, args: event.arguments, stage, count: resultCount });
     }
     if (entries.length > 60) entries.shift();
     dirty = true;
     const wait = receipt ? intervalMs - (timestamp - lastEditAt) : 0;
-    if (wait <= 0) { await flush(deliverySignal); return; }
+    if (wait <= 0) return delivery.enqueue('log', (queueSignal) => flush(AbortSignal.any([queueSignal, deliverySignal].filter(Boolean))));
     // Throttled edits are deferred, never dropped, so the log always catches up with the latest finished step.
     if (!flushTimer) {
-      flushTimer = setTimeout(() => { flushTimer = null; queued = queued.then(() => flush()).catch((error) => { onError(error); }); }, wait);
+      flushTimer = setTimeout(() => { flushTimer = null; void delivery.enqueue('log', flush); }, wait);
       flushTimer.unref?.();
     }
   }
@@ -207,7 +265,7 @@ export function createProgressReporter({ send, edit, remove, signal, now = Date.
     seen.add(identity);
     const index = attempted++;
     lastAttemptAt = timestamp;
-    await attempt(deliverySignal, async (sendSignal) => onSent(await send(content, sendSignal, index)));
+    return delivery.enqueue(`announcement:${index}`, (queueSignal) => attempt(AbortSignal.any([queueSignal, deliverySignal].filter(Boolean)), async (sendSignal) => onSent(await send(content, sendSignal, index))));
   }
 
   async function report(rawEvent, deliverySignal) {
@@ -215,32 +273,36 @@ export function createProgressReporter({ send, edit, remove, signal, now = Date.
     const activity = Object.hasOwn(activities, rawEvent?.toolName) ? activities[rawEvent.toolName] : null;
     if (!activity || !['started', 'completed', 'failed'].includes(rawEvent.stage)) return;
     // Tool arguments come from the model and may be null or malformed; renderers only ever see a plain object.
-    const event = { ...rawEvent, arguments: rawEvent.arguments && typeof rawEvent.arguments === 'object' && !Array.isArray(rawEvent.arguments) ? rawEvent.arguments : {} };
+    const argumentsProvided = !!rawEvent.arguments && typeof rawEvent.arguments === 'object' && !Array.isArray(rawEvent.arguments);
+    const event = { ...rawEvent, arguments: argumentsProvided ? rawEvent.arguments : {}, argumentsProvided };
     const timestamp = now();
     const resultCount = Number.isSafeInteger(event.resultCount) && event.resultCount >= 0 ? event.resultCount : undefined;
     return edit ? logStep(event, timestamp, resultCount, deliverySignal) : announce(event, activity, timestamp, resultCount, deliverySignal);
   }
 
-  function close() { closed = true; cancellation.abort(); clearTimeout(flushTimer); flushTimer = null; }
+  function close() { closed = true; cancellation.abort(); delivery.close(); clearTimeout(flushTimer); flushTimer = null; }
 
   return {
     // Progress is decoration: a rendering or delivery bug is reported, never allowed to reject the tool callback or stall later updates.
     receive: (event, deliverySignal) => {
-      queued = queued.then(() => report(event, deliverySignal)).catch((error) => { onError(error); });
-      return queued;
+      // Ingest immediately even while REST is slow; pending rendering contains only the latest log.
+      return report(event, deliverySignal).catch((error) => { onError(error); });
     },
     close,
+    idle: delivery.idle,
     details: () => details.map((entry) => ({ ...entry })),
     finish: async ({ failed = false, cancelled = false, signal: finishSignal } = {}) => {
       close();
-      await queued;
+      if (!await delivery.settle(finishTimeoutMs)) return;
       if (!receipt || finishSignal?.aborted) return;
       try {
         // The log stays until the answer is over; then it becomes a one-sentence summary (or keeps the steps with a stop note) and loses its buttons.
         const log = entries.length ? `${renderLog(false)}\n` : '';
         const content = cancelled ? `${log}Stopped this answer.` : failed ? `${log}This answer stopped before it finished. Use /nova status for details or try again.` : summarize(entries) || (remove ? '' : 'Finished checking.');
-        if (content) await edit(receipt, content, finishSignal, { components: [] });
-        else await remove(receipt, finishSignal);
+        await delivery.final(async (deliverySignal) => {
+          if (content) await edit(receipt, content, deliverySignal, { components: [] });
+          else await remove(receipt, deliverySignal);
+        }, finishSignal, finishTimeoutMs);
       } catch (error) { if (!finishSignal?.aborted) onError(error); }
     },
   };
