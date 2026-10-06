@@ -1,7 +1,7 @@
 import { EventEmitter } from 'node:events';
 import { PassThrough, Writable } from 'node:stream';
 
-export function fakeCodexServer({ plans, hang = false, tools = {}, toolCalls = [], events = [], delayMs = 5, closeDelayMs = 0, accountType = 'chatgpt' } = {}) {
+export function fakeCodexServer({ plans, hang = false, tools = {}, toolCalls = [], events = [], delayMs = 5, closeDelayMs = 0, accountType = 'chatgpt', interruptCompletes = true } = {}) {
   const requests = [];
   const launches = [];
   const children = [];
@@ -19,6 +19,7 @@ export function fakeCodexServer({ plans, hang = false, tools = {}, toolCalls = [
     let turns = 0;
     const timers = new Set();
     const toolWaiters = new Map();
+    const activeTurns = new Map();
     function emit(value) { if (!stopped) child.stdout.write(JSON.stringify(value) + '\n'); }
     function later(callback) { const timer = setTimeout(() => { timers.delete(timer); if (!stopped) callback(); }, delayMs); timers.add(timer); }
     child.stdin = new Writable({ write(chunk, encoding, callback) {
@@ -35,7 +36,19 @@ export function fakeCodexServer({ plans, hang = false, tools = {}, toolCalls = [
         else if (message.method === 'config/read') reply({ config: { mcp_servers: { discord: { enabled: true, env: { DISCORD_TOKEN: 'hidden-fixture-token' } } } } });
         else if (message.method === 'thread/start') reply({ thread: { id: `thread-${++startedThreads}`, ephemeral: true } });
         else if (message.method === 'mcpServerStatus/list') reply({ data: [{ name: 'discord', tools }] });
-        else if (['turn/interrupt', 'thread/unsubscribe', 'thread/compact/start'].includes(message.method)) reply({});
+        else if (message.method === 'turn/interrupt') {
+          reply({});
+          const activeTurn = activeTurns.get(message.params.threadId);
+          if (activeTurn?.id === message.params.turnId && interruptCompletes) {
+            activeTurn.interrupted = true;
+            activeTurns.delete(message.params.threadId);
+            for (const [requestId, waiter] of toolWaiters) {
+              if (requestId.startsWith(`tool-request-${activeTurn.id}-`)) { toolWaiters.delete(requestId); waiter(); }
+            }
+            emit({ method: 'turn/completed', params: { threadId: message.params.threadId, turn: { id: activeTurn.id, status: 'interrupted' } } });
+          }
+        }
+        else if (['thread/unsubscribe', 'thread/compact/start'].includes(message.method)) reply({});
         else if (message.method === 'turn/steer') reply({ turnId: message.params.expectedTurnId });
         else if (message.method === 'account/read') reply({ account: accountType === null ? null : { type: accountType, email: 'private@example.test', planType: 'plus' }, requiresOpenaiAuth: true });
         else if (message.method === 'account/rateLimits/read') reply({ rateLimits: { primary: { usedPercent: 25, windowDurationMins: 300, resetsAt: 123456 } } });
@@ -43,6 +56,8 @@ export function fakeCodexServer({ plans, hang = false, tools = {}, toolCalls = [
         else if (message.method === 'turn/start') {
           const turnId = `turn-${++turns}`;
           const threadId = message.params.threadId;
+          const activeTurn = { id: turnId, interrupted: false };
+          activeTurns.set(threadId, activeTurn);
           reply({ turn: { id: turnId, status: 'inProgress' } });
           if (hang) continue;
           const plan = plans?.[turns - 1] || { shouldReply: true, messages: [defaultMessage] };
@@ -50,18 +65,22 @@ export function fakeCodexServer({ plans, hang = false, tools = {}, toolCalls = [
           const first = plan.messages[0] ? text.indexOf(JSON.stringify(plan.messages[0])) + JSON.stringify(plan.messages[0]).length : Math.floor(text.length / 2);
           const itemId = `item-${turnId}`;
           const finish = () => later(() => {
+            if (activeTurn.interrupted) return;
             emit({ method: 'item/started', params: { threadId, turnId, item: { id: itemId, type: 'agentMessage', phase: 'final_answer' } } });
             emit({ method: 'item/agentMessage/delta', params: { threadId, turnId, itemId, delta: text.slice(0, first) } });
             later(() => {
+              if (activeTurn.interrupted) return;
               emit({ method: 'item/agentMessage/delta', params: { threadId, turnId, itemId, delta: text.slice(first) } });
               emit({ method: 'thread/tokenUsage/updated', params: { threadId, turnId, tokenUsage: { last: { cachedInputTokens: turns > 1 ? 1024 : 0, inputTokens: 2048 } } } });
               completedTurns += 1;
+              activeTurns.delete(threadId);
               emit({ method: 'turn/completed', params: { threadId, turn: { id: turnId, status: 'completed' } } });
             });
           });
           for (const event of events) emit({ method: event.method, params: { threadId, turnId, ...event.params } });
           let calls = Promise.resolve();
           for (const [index, call] of toolCalls.entries()) calls = calls.then(() => new Promise((resolve) => {
+            if (activeTurn.interrupted) { resolve(); return; }
             const id = `tool-request-${turnId}-${index}`;
             toolWaiters.set(id, resolve);
             emit({ id, method: call.method || 'item/tool/call', params: { threadId, turnId, callId: `call-${index}`, tool: call.tool, arguments: call.arguments || {}, ...call.params } });
