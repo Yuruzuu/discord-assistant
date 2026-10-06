@@ -72,7 +72,7 @@ export function createConnectedApps({ command = process.env.CODEX_CLI_PATH || 'c
     const deadline = now() + startupTimeoutMs;
     for (;;) {
       signal?.throwIfAborted();
-      const status = await server.request('mcpServerStatus/list', { threadId, limit: 100 });
+      const status = await server.request('mcpServerStatus/list', { threadId, limit: 100 }, { signal, deadlineAt: deadline });
       const entry = (status.data || []).find((item) => item.name === appsServer);
       if (entry?.toolsError) throw new Error(`Connected apps are unavailable: ${String(entry.toolsError).slice(0, 200)}`);
       if (entry && Object.keys(entry.tools || {}).length) {
@@ -124,7 +124,7 @@ export function createConnectedApps({ command = process.env.CODEX_CLI_PATH || 'c
 
   async function execute(tool, args, signal) {
     signal?.throwIfAborted();
-    const result = await server.request('mcpServer/tool/call', { server: appsServer, threadId, tool, arguments: args }, callTimeoutMs);
+    const result = await server.request('mcpServer/tool/call', { server: appsServer, threadId, tool, arguments: args }, { timeoutMs: callTimeoutMs, signal });
     signal?.throwIfAborted();
     const content = Array.isArray(result.content) ? result.content : [];
     let text = content.filter((item) => item?.type === 'text').map((item) => item.text).join('\n');

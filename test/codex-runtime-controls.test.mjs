@@ -65,7 +65,9 @@ test('steering uses the active turn precondition and interrupt affects only that
     await first.interrupt();
     await rejected;
     assert.equal(fixture.children[0].exitCode, null);
-    assert.equal(second.status().sharedWorkerConversations, 1);
+    assert.equal(second.status().sharedWorkerConversations, 2);
+    assert.equal(first.status().threadId, request.params.threadId);
+    assert.equal(first.status().performance.counters.retained_threads, 1);
     assert.equal((await first.steer('Late correction')).accepted, false);
   } finally { await Promise.all([first.close(), second.close()]); }
 });

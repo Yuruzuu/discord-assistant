@@ -51,6 +51,13 @@ The owner ID for fixtures is `directMessageOwnerId` from
 
 ## Intentional tripwires
 
+Runtime performance/recovery suites additionally cover bounded RPC framing and
+backpressure, canceled startup owners, late native writes, exact terminal
+identity, warm-thread retention, stalled delivery, context rollback and memory
+clearing, fair conversation admission, and slow decoration queues. Run
+`node scripts/benchmark-harness.mjs --baseline d7ac201 --samples 20` for a
+controlled harness-only comparison; it uses no Discord or provider calls.
+
 - **Tool count and write-tool list.** `stdio.test.mjs` asserts the exact ordered
   list of write tools. `plugin.test.mjs` and `read-tool-registry.test.mjs`
   assert the total tool count. Update them whenever you add or remove a tool.

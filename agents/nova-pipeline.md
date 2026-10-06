@@ -28,11 +28,13 @@ How one owner message becomes Nova's reply. All modules are in `src/proactive/`.
   `questions` also responds to anything `isQuestion` matches. `all` responds to
   everything (DMs always use `all`).
 - **Batching.** Messages from the same author are merged for `batchWindowMs`
-  (1.5 s). The batch is flushed at 5 messages or after 5 s. The queue is capped
+  (0.5 s). The batch is flushed at 5 messages or after 5 s. The queue is capped
   at 20 batches.
 - **Pacing.** `cooldownMs` and `maxRepliesPerMinute` apply per engine. The
-  all-servers listener also serialises across channels with
-  `reply-scheduler.mjs`.
+  all-servers listener admits at most two independent conversations through
+  `reply-scheduler.mjs`, with one running turn per conversation key. Start-rate
+  limits are global; cooldown applies to that conversation rather than every
+  other channel. Canceled queued requests do not consume start capacity.
 - **Status reactions** on the trigger: ⏳ queued → ⚙️ working → 🔎 tool → ✅
   done / ⚠️ error / ⌛ stalled (20 s). They are cleared 5 s after the turn.
 
@@ -56,6 +58,10 @@ How one owner message becomes Nova's reply. All modules are in `src/proactive/`.
   (`worker-environment.mjs`), no approvals, and no native file or command access.
 - Each turn sends only *new* nearby messages since the last turn
   (`newestContextId`), plus up to 8 image inputs mapped by `imageSources`.
+- `context-projection` omits unchanged memory/catalog/identity snapshots only
+  when delta metadata saves bytes. Changes and deletions replace prior values;
+  a failed turn never commits projected state. Reset and native compaction
+  invalidate snapshots and the message watermark for rehydration.
 - `baseInstructions` are read from `instructions/nova/*.md` (`loadInstructions`)
   each time a thread starts, so prompt edits apply on the next conversation or
   `nova reset`.
@@ -73,6 +79,15 @@ How one owner message becomes Nova's reply. All modules are in `src/proactive/`.
   `web_read_link` until the next turn.
 - Owner controls on the live thread: `steer`, `stop`, `reset`, `compact`, and
   `configure` (model, effort, Fast).
+- `native-turn` binds the exact turn identity, buffers pre-admission output,
+  and accepts only valid matching terminal outcomes. Confirmed cancellation or
+  native failure retains a healthy thread; unknown settlement, malformed plans
+  or dead transport retire it without disrupting peers. Written native starts
+  are never replayed; late identities are stopped explicitly.
+- RPC budgets are method-specific: initialize/thread-start/catalog up to 60 s,
+  ordinary controls 15 s, interruption 5 s and compaction 120 s. Transport
+  frames and queued bytes are bounded; callback writes honor backpressure and
+  report pre-write versus unknown outcomes.
 
 ## 5. Streaming bubbles (`reply-stream.mjs`)
 
@@ -158,6 +173,12 @@ that groups verbs ("I checked your connected apps and your Gmail, and searched
 adds a closing note. Arguments are sanitized as described in
 [security-invariants.md](security-invariants.md).
 
+Decoration callbacks ingest synchronously and coalesce behind bounded per-message
+REST queues. Tool results and real replies do not wait for decoration delivery.
+Settlement and final edits have bounded cleanup; a timed-out message queue is
+quarantined so late operations cannot overwrite newer state. Real replies,
+actions and their delivery journals retain confirmed-outcome semantics.
+
 While a step runs, its sanitized tool call or actual handoff command appears in
 a fenced block. Completion removes that block immediately. Failed/cancelled
 finals remove all active blocks too; private reasoning and command output are
@@ -185,3 +206,10 @@ page images to the normal request context; scoped reads continue with `nextPage`
 resolves host `request()` promises (digests) from the journal receipts. Engine
 statistics (`sentMessages`, `streamedMessages`, `reactions`, `forwards`,
 `errors`, timing) appear in listener status.
+
+`stage-metrics` keeps 128 recent numeric samples per stage, p50/p95, maxima and
+counters. Runtime status exposes queue/shared-admission, preparation, startup,
+native execution/first text, host tool, delivery and settlement measurements.
+`generation_total` overlaps streaming delivery; spans are not additive. No
+prompts, source text or tool arguments are retained. See
+[performance verification](harness-performance.md) for the controlled benchmark.

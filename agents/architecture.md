@@ -152,7 +152,10 @@ See [nova-pipeline.md](nova-pipeline.md) for the detailed lifecycle.
 | `engine.mjs` | Trigger policy, batching, queue, cooldown, turn processing, in-conversation `nova …` controls |
 | `reply-scheduler.mjs` | Shared, serialised cooldown and rate limit across conversations |
 | `context.mjs`, `context-media.mjs` | Build model input: trigger, recent and reply messages, expressions, GIFs, images, voice transcripts, forwarded snapshots |
-| `conversation.mjs` (`codex-responder.mjs` re-exports) | Codex thread lifecycle, turn execution, tool-call budget, streaming, steer, compact, reset, diagnostics |
+| `conversation.mjs` (`codex-responder.mjs` re-exports) | Codex ownership, exact completion, retained recovery, bounded tools and streaming |
+| `native-turn.mjs` | Native admission/terminal identity and deadline-aware operation settlement |
+| `context-projection.mjs`, `tool-projection.mjs` | Transactional snapshot deltas and bounded lossless-handle-backed tool previews |
+| `stage-metrics.mjs` | Numeric stage sampling and p50/p95 diagnostics without source content |
 | `codex-pool.mjs`, `app-server.mjs` | Pooled `codex app-server` child over JSON-RPC |
 | `worker-environment.mjs` | Allow-listed environment for the Codex child |
 | `reply-style.mjs`, `reply-defaults.mjs` | Reply-plan JSON schema; default model, effort and tier (the persona prompt lives in `instructions/nova/`) |

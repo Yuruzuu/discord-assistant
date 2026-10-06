@@ -15,6 +15,7 @@ import { createDeliveryJournal } from './delivery-journal.mjs';
 import { parseNovaCommand, renderControlResult } from './controls.mjs';
 import { join } from 'node:path';
 import { createOwnerCapabilities } from './owner-capabilities.mjs';
+import { createStageMetrics } from './stage-metrics.mjs';
 
 const uncertainDelivery = (entries, messageId) => entries.some((entry) => entry.triggerMessageId === messageId && ['unknown', 'pending'].includes(entry.status));
 
@@ -36,6 +37,7 @@ export async function createChannelRuntime(service, configuration, bot, { warm =
   const scope = { channelId: channel.id, guildId: guild?.id || null, directMessages: Boolean(configuration.directMessages) };
   const settings = await settingsStore.load(account.id, channel.id);
   const preferences = { ...configuration, ...settings.conversations[`${account.id}:${channel.id}`] };
+  const metrics = createStageMetrics();
   const memory = createMemoryStore(memoryPath({ ...configuration, accountId: account.id }, memoryRoot));
   await memory.load();
   const journal = await createDeliveryJournal({ accountId: account.id, channelId: channel.id, ...(deliveryRoot || memoryRoot ? { root: deliveryRoot || join(memoryRoot, 'delivery') } : {}) });
@@ -46,7 +48,7 @@ export async function createChannelRuntime(service, configuration, bot, { warm =
     if (configuration.directMessages) ownerCapabilities = await createOwnerCapabilities({ service, accountId: account.id, channelId: channel.id, settings, connectedApps, actionComponents, root: memoryRoot, onError: (error) => onStatus({ ownerCapabilityError: String(error.message).slice(0, 200) }) });
     const requests = new Map();
     const readTools = createDiscordReadTools(service, scope, { ...settings, connectedApps, ownerActions: ownerCapabilities?.actions, schedules: ownerCapabilities?.schedules, handoffs: ownerCapabilities?.handoffs });
-    generateReply = responderFactory({ command: preferences.codexCommand, model: preferences.model, reasoningEffort: preferences.reasoningEffort, serviceTier: preferences.serviceTier, timeoutMs: preferences.timeoutMs, toolTimeoutMs: preferences.toolTimeoutMs, maxToolCalls: preferences.maxToolCalls, webSearch: webSearchMode(settings, configuration), scope, readTools, requireSubscription: responderFactory === createCodexResponder });
+    generateReply = responderFactory({ command: preferences.codexCommand, model: preferences.model, reasoningEffort: preferences.reasoningEffort, serviceTier: preferences.serviceTier, timeoutMs: preferences.timeoutMs, toolTimeoutMs: preferences.toolTimeoutMs, maxToolCalls: preferences.maxToolCalls, webSearch: webSearchMode(settings, configuration), scope, readTools, metrics, requireSubscription: responderFactory === createCodexResponder });
     if (warm) await generateReply.warmup();
     const transcribe = createVoiceTranscriber(settings.voice);
     const conversationContext = createConversationContext(client, { bot, guild, channel, directMessages: configuration.directMessages, gifUrls: configuration.gifUrls }, { ...settings, transcribe: settings.voice.backend === 'disabled' ? undefined : transcribe });
@@ -61,7 +63,7 @@ export async function createChannelRuntime(service, configuration, bot, { warm =
       handleCommands: createMemoryCommandHandler(memory, bot.id, (messageId) => client.getMessage(channel.id, messageId)),
       startTyping: (signal) => startTypingIndicator((typingSignal) => client.triggerTyping(channel.id, { signal: typingSignal }), { signal }),
       generateReply, sendReplies: createReplySender(service, { ...configuration, listenerId: `${account.id}:${channel.id}`, deliveryJournal: journal, progressComponents, messageComponents, forwardSource: readTools.forwardSource, sharedImage: readTools.sharedImage, sendTarget: readTools.sendTarget }),
-      onStatus, onControl,
+      onStatus, onControl, onTiming: ({ stage, elapsedMs }) => metrics.record(stage === 'inference' ? 'generation_total' : stage, elapsedMs),
       onBatchComplete: async (messages, outcome) => {
         for (const message of messages) {
           await journal.finishIngress(message.id, outcome);
@@ -79,7 +81,7 @@ export async function createChannelRuntime(service, configuration, bot, { warm =
 
     function status() {
       return { guildId: guild?.id || null, channelId: channel.id, serverName: guild?.name || null, channelName: channel.name || 'Direct Messages',
-        memoryFile: memory.filename, statistics: engine.status(), conversation: generateReply.status(), capabilities: { tools: readTools.definitions.map((tool) => tool.name), voiceBackend: settings.voice.backend } };
+        memoryFile: memory.filename, statistics: engine.status(), conversation: generateReply.status(), performance: metrics.snapshot(), capabilities: { tools: readTools.definitions.map((tool) => tool.name), voiceBackend: settings.voice.backend } };
     }
 
     async function control(request) {

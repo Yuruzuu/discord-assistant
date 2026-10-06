@@ -108,7 +108,8 @@ test('cancellation interrupts the active turn and prevents late bubble delivery'
     cancellation.abort();
     await rejected;
     assert.ok(server.requests.some((request) => request.method === 'turn/interrupt'));
-    assert.equal(respond.status().threadId, null);
+    assert.equal(respond.status().threadId, 'thread-1');
+    assert.equal(respond.status().performance.counters.retained_threads, 1);
   } finally { await respond.close(); }
 });
 

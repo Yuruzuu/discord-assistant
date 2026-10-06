@@ -12,7 +12,7 @@ images, voice notes, reactions, progress displays and owner controls.
 Reading uses Discord REST. Sending, reactions, progress edits and research-thread
 creation occur only when requested or within explicitly enabled conversations.
 The listener starts on demand; it does not auto-start with the operating system.
-Version 2.10.0 exposes 37 MCP tools, or 40 with approved project roots. Existing
+Version 2.11.0 exposes 37 MCP tools, or 40 with approved project roots. Existing
 MCP tool names and arguments remain compatible.
 
 ## Requirements
@@ -580,6 +580,27 @@ write proposals while keeping connected-app reads.
 
 Restart the relevant listener and MCP client after editing global capability
 settings. Owner conversation controls apply their settings while listening.
+
+### Runtime latency and recovery
+
+Nova admits two independent server conversations at once while keeping each
+conversation serial. Its default input batching window is 500 ms; existing
+explicit pacing settings still apply. Progress and status rendering run through
+bounded background queues, so slow Discord decoration does not hold up tools or
+real replies.
+
+Healthy native threads survive confirmed cancellation and recoverable native
+failures. Unknown shutdowns and invalid replies retire only the affected thread;
+uncertain sends and written native requests are never automatically replayed.
+The RPC transport has method-specific budgets, frame/pending-byte limits and
+late-response cleanup. Stable context uses transactional revisions, and model
+tool previews default to 32 KiB with conversation-local handles for full sources.
+Trusted-local MCP result budgets remain unchanged. Native Codex owns compaction.
+
+Status includes bounded numeric stage p50/p95 measurements for queueing,
+preparation, worker startup, native output, tools, delivery and settlement. They
+contain no message bodies or arguments. See [harness performance verification](agents/harness-performance.md)
+for reproducible synthetic comparisons and their limits.
 
 Local voice transcription uses whisper.cpp and FFmpeg, installed separately from
 Git and the plugin. Discord Opus notes need conversion to 16 kHz mono PCM WAV.
