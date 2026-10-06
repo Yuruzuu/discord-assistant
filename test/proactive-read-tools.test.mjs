@@ -271,3 +271,50 @@ test('retrieval handles evict after eight results expire and keep Unicode JSON p
   const latest = contents(await tools.call('discord_list_servers', {})); currentTime += 600001;
   await assert.rejects(tools.call('read_tool_result', { handle: latest.resultHandle }), /expired/);
 });
+
+test('worker budgets project smaller results while public MCP keeps its existing unabridged contract', async () => {
+  const { service } = fixture();
+  const source = { servers: [{ id: guildId, name: 'AV Dev', description: 'Unicode 😀 source '.repeat(4000) }], accounts: [] };
+  service.listServers = async () => source;
+  const tools = createDiscordReadTools(service, scope);
+  const worker = await tools.call('discord_list_servers', {});
+  assert.ok(Buffer.byteLength(worker.contentItems[0].text) <= 32768);
+  const projected = contents(worker);
+  assert.equal(projected.servers[0].id, guildId);
+  assert.ok(projected.partial.omissions.some((entry) => entry.kind === 'text'));
+  const publicResult = contents(await createDiscordReadTools(service, { ...scope, trustedLocal: true }).call('discord_list_servers', {}));
+  assert.deepEqual(publicResult, source);
+  let offset = 0;
+  let reconstructed = '';
+  do {
+    const page = contents(await tools.call('read_tool_result', { handle: projected.resultHandle, offset, length: 20000 }));
+    reconstructed += page.text;
+    offset = page.nextOffset;
+  } while (offset !== null);
+  assert.deepEqual(JSON.parse(reconstructed), source);
+});
+
+test('PDF projections keep page attribution and report images that require another source page', async () => {
+  const { service } = fixture();
+  service.accounts[0].client.getMessage = async () => ({ id: messageId, attachments: [{ id: '500000000000000001', filename: 'spec.pdf' }] });
+  const tools = createDiscordReadTools(service, scope, { maxResultBytes: 4096, readPdf: async () => ({ attachmentId: '500000000000000001', pages: Array.from({ length: 5 }, (_, index) => ({ pageNumber: index + 1, text: 'specification '.repeat(3000), image: { mimeType: 'image/png', data: 'YQ==' } })) }) });
+  const result = await tools.call('discord_read_pdf', { channelId, messageId, attachmentId: '500000000000000001' });
+  const projected = contents(result);
+  assert.equal(projected.messageId, messageId);
+  assert.equal(projected.attachmentId, '500000000000000001');
+  assert.equal(result.contentItems.filter((item) => item.type === 'inputImage').length, 3);
+  assert.deepEqual(projected.toolImageSources.map((image) => image.pageNumber), [1, 2, 3]);
+  assert.equal(projected.omittedImages.available, 5);
+  assert.equal(projected.omittedImages.returned, 3);
+});
+
+test('retrieving private app evidence on a later turn reestablishes the exfiltration guard', async () => {
+  const { service } = fixture();
+  const tools = createDiscordReadTools(service, scope, { maxResultBytes: 4096, connectedApps: { call: async () => ({ app: 'github', text: 'private evidence '.repeat(4000), privateOwnerData: true }) } });
+  const source = contents(await tools.call('apps_call_tool', { tool: 'github.read' }));
+  tools.beginTurn();
+  const page = contents(await tools.call('read_tool_result', { handle: source.resultHandle }));
+  assert.equal(page.privateOwnerData, true);
+  await assert.rejects(tools.call('web_read_link', { url: 'https://example.com' }), /private data cannot leak/);
+  await assert.rejects(tools.sendTarget(channelId), /connected-app data/);
+});

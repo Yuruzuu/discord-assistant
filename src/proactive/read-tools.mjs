@@ -8,6 +8,7 @@ import { readToolFields, executeSharedReadTool } from './read-tool-registry.mjs'
 import { readPdfAttachment } from './pdf-reader.mjs';
 import { reminderScheduleSchema, alertScheduleSchema } from './schedules.mjs';
 import { directMessageOwnerId } from './target.mjs';
+import { projectToolResult } from './tool-projection.mjs';
 
 const snowflake = z.string().regex(/^\d{17,20}$/);
 
@@ -18,7 +19,18 @@ export function createDiscordReadTools(service, scope, options = {}) {
   let appDataRead = false;
   const shareableImages = new Map();
   const now = options.now || Date.now;
-  const resultBudget = Math.max(4096, options.maxResultBytes || 128 * 1024);
+  const resultBudget = Math.max(4096, options.maxResultBytes || (scope.trustedLocal ? 128 : 32) * 1024);
+  const storedResultLimit = 16 * 1024 * 1024;
+
+  function storeResult(text, privateOwnerData = false) {
+    const bytes = Buffer.byteLength(text);
+    if (bytes > storedResultLimit) throw new Error('Tool result exceeds the lossless retrieval limit; retry with a smaller page or narrower query.');
+    for (const [key, stored] of storedResults) if (now() - stored.createdAt > 600000) storedResults.delete(key);
+    while (storedResults.size >= 8 || [...storedResults.values()].reduce((total, stored) => total + stored.bytes, 0) + bytes > 32 * 1024 * 1024) storedResults.delete(storedResults.keys().next().value);
+    const handle = randomUUID();
+    storedResults.set(handle, { text, bytes, privateOwnerData, createdAt: now() });
+    return handle;
+  }
 
   function register(name, description, fields, execute) {
     const schema = z.strictObject(readToolFields(name, scope) || fields);
@@ -207,9 +219,10 @@ export function createDiscordReadTools(service, scope, options = {}) {
   }, ({ handle, offset, length }) => {
     const stored = storedResults.get(handle);
     if (!stored || now() - stored.createdAt > 600000) { storedResults.delete(handle); throw new Error('Result handle expired; run the source tool again'); }
+    if (stored.privateOwnerData) appDataRead = true;
     if (offset > 0 && /[\uDC00-\uDFFF]/.test(stored.text[offset] || '') && /[\uD800-\uDBFF]/.test(stored.text[offset - 1])) offset += 1;
     let end = Math.min(offset + length, stored.text.length);
-    const page = () => ({ handle, offset, text: stored.text.slice(offset, end), nextOffset: end < stored.text.length ? end : null, untrustedContent: true });
+    const page = () => ({ handle, offset, text: stored.text.slice(offset, end), nextOffset: end < stored.text.length ? end : null, untrustedContent: true, ...(stored.privateOwnerData ? { privateOwnerData: true } : {}) });
     while (Buffer.byteLength(JSON.stringify(page())) > resultBudget && end > offset) end = offset + Math.floor((end - offset) / 2);
     if (end > offset && /[\uD800-\uDBFF]/.test(stored.text[end - 1]) && /[\uDC00-\uDFFF]/.test(stored.text[end] || '')) end -= 1;
     return page();
@@ -223,40 +236,19 @@ export function createDiscordReadTools(service, scope, options = {}) {
     const result = await tool.execute(args, signal);
     signal?.throwIfAborted();
     const { toolImages = [], ...structured } = result;
-    // A day of server activity is the one result worth a larger budget; its transcripts are already compacted to fit maxCharacters.
-    const budget = name === 'discord_read_activity' ? Math.max(resultBudget, 200 * 1024) : resultBudget;
+    const selectedImages = toolImages.map((image, index) => ({ image, index })).filter(({ image }) => /^image\/(png|jpeg|webp|gif)$/.test(image.mimeType) && image.data?.length <= 4 * 1024 * 1024).slice(0, 3);
+    if (toolImages.length) {
+      structured.toolImageSources = selectedImages.map(({ image, index }) => ({ index, mimeType: image.mimeType, ...(structured.messageId ? { messageId: structured.messageId } : {}), ...(structured.attachmentId ? { attachmentId: structured.attachmentId } : {}), ...(structured.renderedPageNumbers?.[index] ? { pageNumber: structured.renderedPageNumbers[index] } : {}) }));
+      if (selectedImages.length < toolImages.length) structured.omittedImages = { returned: selectedImages.length, available: toolImages.length, nextStep: 'Read the source again with a smaller image/page range to inspect omitted images.' };
+    }
+    // Public MCP activity retains its existing limit; worker turns share the smaller model budget.
+    const budget = scope.trustedLocal && name === 'discord_read_activity' ? Math.max(resultBudget, 200 * 1024) : resultBudget;
     let text = JSON.stringify(structured);
     const bytes = Buffer.byteLength(text);
     if (bytes > budget) {
-      const handle = randomUUID();
-      if (bytes <= 4 * 1024 * 1024) {
-        for (const [key, stored] of storedResults) if (now() - stored.createdAt > 600000) storedResults.delete(key);
-        storedResults.set(handle, { text, createdAt: now() });
-        while (storedResults.size > 8) storedResults.delete(storedResults.keys().next().value);
-        structured.resultHandle = handle;
-      }
-      const collections = ['messages', 'members', 'channels', 'servers', 'conversations', 'matches'];
-      for (const field of collections) {
-        const items = structured[field];
-        if (!Array.isArray(items)) continue;
-        const fits = (count) => { structured[field] = items.slice(0, count); return Buffer.byteLength(JSON.stringify(structured)) <= budget; };
-        if (items.length <= 1 || fits(items.length)) continue;
-        // Binary search for the longest fitting prefix (at least one item) instead of re-serializing once per dropped item.
-        let low = 1;
-        let high = items.length - 1;
-        while (low < high) { const middle = Math.ceil((low + high) / 2); if (fits(middle)) low = middle; else high = middle - 1; }
-        structured[field] = items.slice(0, low);
-        structured.partial = { returned: low, available: items.length, field, nextStep: 'Use a narrower query or smaller page; follow source links and navigation for omitted evidence.' };
-      }
-      text = JSON.stringify(structured);
-      if (Buffer.byteLength(text) > budget) {
-        let previewEnd = Math.floor(budget / 6);
-        const preview = () => JSON.stringify({ partial: true, resultHandle: structured.resultHandle, preview: text.slice(0, previewEnd), nextStep: 'Use read_tool_result for omitted content, or retry with a smaller limit or narrower query.' });
-        while (Buffer.byteLength(preview()) > budget && previewEnd > 0) previewEnd = Math.floor(previewEnd / 2);
-        text = preview();
-      }
+      text = projectToolResult(structured, { budget, handle: storeResult(text, structured.privateOwnerData === true) });
     }
-    return { contentItems: [{ type: 'inputText', text }, ...toolImages.slice(0, 3).filter((image) => /^image\/(png|jpeg|webp|gif)$/.test(image.mimeType) && image.data?.length <= 4 * 1024 * 1024).map((image) => ({ type: 'inputImage', imageUrl: `data:${image.mimeType};base64,${image.data}` }))], success: true,
+    return { contentItems: [{ type: 'inputText', text }, ...selectedImages.map(({ image }) => ({ type: 'inputImage', imageUrl: `data:${image.mimeType};base64,${image.data}` }))], success: true,
       resultCount: result.messageCount ?? result.messages?.length ?? result.members?.length ?? result.channels?.length ?? result.servers?.length };
   }
 
