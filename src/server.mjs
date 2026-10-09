@@ -8,6 +8,7 @@ import { registerProactiveTools } from './proactive/tools.mjs';
 import { readToolFields, executeSharedReadTool, readSnowflake as snowflake } from './proactive/read-tool-registry.mjs';
 import { createDiscordReadTools } from './proactive/read-tools.mjs';
 import { addReaction } from './reactions.mjs';
+import { addMemberRole, CREATABLE_CHANNEL_TYPES, createCategory, createChannel, createRole, removeMemberRole } from './guild-admin.mjs';
 
 const messageFields = {
   content: z.string().max(2000).optional(),
@@ -192,6 +193,58 @@ export function createDiscordMcpServer(service, { novaOptions = {} } = {}) {
     annotations: { ...writeAnnotations, idempotentHint: true },
     inputSchema: { guildId: snowflake.optional(), channelId: snowflake, messageId: snowflake, emoji: z.string().min(1).max(100) },
   }, async (args) => success(await addReaction(service, args)));
+
+  const reason = z.string().max(512).optional().describe('Audit log reason shown in the Discord server settings');
+
+  register(server, 'discord_create_channel', {
+    title: 'Create Discord Channel',
+    description: 'Create a text, voice, announcement, stage or forum channel in a server, optionally inside a category (parentId). Only use when explicitly asked. Needs the bot to have Manage Channels. Not retried automatically; if the outcome is unknown, list channels before trying again.',
+    annotations: writeAnnotations,
+    inputSchema: {
+      guildId: snowflake, name: z.string().min(1).max(100),
+      type: z.enum(Object.keys(CREATABLE_CHANNEL_TYPES)).default('text'),
+      parentId: snowflake.optional().describe('Category channel ID to create the channel under'),
+      topic: z.string().max(1024).optional(), nsfw: z.boolean().optional(),
+      userLimit: z.number().int().min(0).max(99).optional().describe('Voice channels only; 0 means unlimited'),
+      rateLimitPerUser: z.number().int().min(0).max(21600).optional().describe('Slowmode in seconds'),
+      reason,
+    },
+  }, async (args) => success(await createChannel(service, args)));
+
+  register(server, 'discord_create_category', {
+    title: 'Create Discord Category',
+    description: 'Create a channel category in a server. Only use when explicitly asked. Needs the bot to have Manage Channels. Not retried automatically; if the outcome is unknown, list channels before trying again.',
+    annotations: writeAnnotations,
+    inputSchema: { guildId: snowflake, name: z.string().min(1).max(100), reason },
+  }, async (args) => success(await createCategory(service, args)));
+
+  register(server, 'discord_create_role', {
+    title: 'Create Discord Role',
+    description: 'Create a role in a server. Permissions are a decimal bitfield string and default to Discord\'s default (the @everyone permissions); the bot cannot grant permissions it lacks. Only use when explicitly asked. Needs the bot to have Manage Roles. Not retried automatically; if the outcome is unknown, list the server roles before trying again.',
+    annotations: writeAnnotations,
+    inputSchema: {
+      guildId: snowflake, name: z.string().min(1).max(100),
+      color: z.union([z.number().int().min(0).max(0xffffff), z.string().regex(/^#?[0-9a-fA-F]{6}$/)]).optional().describe('Integer RGB value or #RRGGBB'),
+      hoist: z.boolean().optional().describe('Show members of this role separately in the member list'),
+      mentionable: z.boolean().optional(),
+      permissions: z.string().regex(/^\d{1,20}$/).optional().describe('Decimal permission bitfield, for example "0" for none'),
+      reason,
+    },
+  }, async (args) => success(await createRole(service, args)));
+
+  register(server, 'discord_add_role', {
+    title: 'Give Discord Role',
+    description: 'Give a role to a server member. Idempotent. Only use when explicitly asked. Needs Manage Roles, and the role must sit below the bot\'s highest role.',
+    annotations: { ...writeAnnotations, idempotentHint: true },
+    inputSchema: { guildId: snowflake, userId: snowflake, roleId: snowflake, reason },
+  }, async (args) => success(await addMemberRole(service, args)));
+
+  register(server, 'discord_remove_role', {
+    title: 'Take Away Discord Role',
+    description: 'Remove a role from a server member. Idempotent. Only use when explicitly asked. Needs Manage Roles, and the role must sit below the bot\'s highest role.',
+    annotations: { ...writeAnnotations, idempotentHint: true },
+    inputSchema: { guildId: snowflake, userId: snowflake, roleId: snowflake, reason },
+  }, async (args) => success(await removeMemberRole(service, args)));
 
   const readTools = createDiscordReadTools(service, { trustedLocal: true, directMessages: true }, novaOptions);
   for (const tool of readTools.registry) {

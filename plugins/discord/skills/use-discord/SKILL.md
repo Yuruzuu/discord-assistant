@@ -70,6 +70,11 @@ bot, not the user's personal account. Personal DMs with other people are not ava
 - Use `discord_send_messages` for a few short conversational bubbles. It sends
   in order, with a brief interval, and references the original message only on
   the first bubble. Preserve partial receipts if a later send fails.
+- Use `discord_create_channel`, `discord_create_category`, `discord_create_role`,
+  `discord_add_role` and `discord_remove_role` only when explicitly asked to
+  change a server's structure or a member's roles. Create the category first and
+  pass its ID as `parentId`. Creates are not retried: if the outcome is unknown,
+  list the server before trying again. Pass a short `reason` for the audit log.
 - Use `discord_forward_messages` when asked to forward or share existing
   messages or attachments. It natively forwards 1 to 10 messages (URLs or
   channelId plus messageId) in order; attachments travel with their message.

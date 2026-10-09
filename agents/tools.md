@@ -14,7 +14,7 @@ becomes an `isError` result with structured `error` fields: `nonce` and
 for batches. Tools are read-only by default (`readOnlyHint: true`), and write
 tools spread `writeAnnotations`.
 
-## MCP tools (37)
+## MCP tools (42)
 
 R = read-only, W = write. The **Schema** column says where the input schema is
 defined.
@@ -56,6 +56,11 @@ The MCP server registers every `read-tools` tool not already defined in
 | `discord_send_messages` | `messaging.sendMessageBatch` | 1–5 bubbles, `intervalMs`, `batchId` → nonces `<batchId>:<i>` |
 | `discord_forward_messages` | `messaging.forwardMessages` | 1–10 native forwards (URL or channel and message IDs), in order, nonces `<batchId>:f<i>`. A forward carries no text |
 | `discord_add_reaction` | `reactions.addReaction` | Unicode or custom emoji, idempotent |
+| `discord_create_channel` / `discord_create_category` | `guild-admin.createChannel` / `createCategory` | Needs Manage Channels. POST, never retried; 5xx or network failures say the outcome is unknown. Optional audit-log `reason` |
+| `discord_create_role` | `guild-admin.createRole` | Needs Manage Roles. Permissions are a decimal bitfield string; `color` is an integer or `#RRGGBB` |
+| `discord_add_role` / `discord_remove_role` | `guild-admin.addMemberRole` / `removeMemberRole` | Idempotent PUT/DELETE. Refuses the @everyone role |
+
+The administration tools are MCP-only (trusted local callers). Nova's worker has no equivalent, and its reply plan cannot create channels or roles.
 
 ### Nova lifecycle (`src/proactive/tools.mjs` → `controller.mjs`)
 

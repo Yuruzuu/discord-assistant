@@ -53,6 +53,7 @@ needs to relax one, stop and ask the human first.
 | An error with an unknown outcome (5xx or network) is marked `sendStatus: 'unknown'` and **never auto-retried** | `messaging.postMessage`, `discord-api.mjs` |
 | Nova journals each operation. An `unknown` entry blocks resending until the owner resolves it | `delivery-journal.mjs`, `reply-sender.deliver`, `channel-runtime` (`retry`) |
 | Mentions are disabled unless the MCP caller sets `allowMentions`. Nova never pings, except users mentioned in a `channelMessages` post the owner asked to notify. Roles and @everyone never ping | `allowed_mentions.parse: []`, `reply-sender.channelMessages` (`users` list) |
+| Server administration tools (`discord_create_*`, `discord_add_role`, `discord_remove_role`) are MCP-only, so Nova cannot reach them. Creates are never auto-retried, and @everyone cannot be assigned | `guild-admin.mjs`, `server.mjs` |
 | MCP write tools are annotated `readOnlyHint: false`, and tool descriptions say "only use when explicitly asked" | `server.mjs`, `tool-results.writeAnnotations` |
 
 ## Secrets and local control

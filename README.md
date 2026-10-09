@@ -12,7 +12,7 @@ images, voice notes, reactions, progress displays and owner controls.
 Reading uses Discord REST. Sending, reactions, progress edits and research-thread
 creation occur only when requested or within explicitly enabled conversations.
 The listener starts on demand; it does not auto-start with the operating system.
-Version 2.11.0 exposes 37 MCP tools, or 40 with approved project roots. Existing
+Version 2.11.0 exposes 42 MCP tools, or 45 with approved project roots. Existing
 MCP tool names and arguments remain compatible.
 
 ## Requirements
@@ -128,6 +128,9 @@ that file; `tokenEnv` is an environment variable name, not a token.
 | `discord_send_message` | Send bot messages with text, custom emojis, and up to three server stickers. |
 | `discord_reply` | Use Discord's native reply feature for a specific message, with optional reply notifications. |
 | `discord_send_messages` | Send one to five short message bubbles in order, reporting partial receipts if a send fails. |
+| `discord_create_channel` / `discord_create_category` | Create a text, voice, announcement, stage or forum channel (optionally under a category) or a category. Needs **Manage Channels**. |
+| `discord_create_role` | Create a role with optional color, hoist, mentionable and permission bitfield. Needs **Manage Roles**. |
+| `discord_add_role` / `discord_remove_role` | Give or take away a role for a member. Needs **Manage Roles** with the role below the bot's highest role. |
 | `discord_forward_messages` | Natively forward one to ten existing messages, with their attachments, into a channel, thread or DM in order. Nova can also forward up to five messages per reply within its reading scope. |
 | `discord_user_info` | Get a public profile, avatar and creation date, plus server nickname, join date and roles when requested. |
 | `discord_start_proactive` | Start a background channel listener powered by the logged-in Codex CLI. |

@@ -179,7 +179,23 @@ export class DiscordApiClient {
     return bodyDelay != null || headerDelay != null || resetAfter != null;
   }
 
-  async requestJson(path, route, major, method, payload, { signal } = {}) {
+  createGuildChannel(guildId, payload, options) {
+    return this.post(`/guilds/${guildId}/channels`, payload, options);
+  }
+
+  createGuildRole(guildId, payload, options) {
+    return this.post(`/guilds/${guildId}/roles`, payload, options);
+  }
+
+  addGuildMemberRole(guildId, userId, roleId, options) {
+    return this.scheduleRequest('PUT', `/guilds/${guildId}/members/${userId}/roles/${roleId}`, undefined, options);
+  }
+
+  removeGuildMemberRole(guildId, userId, roleId, options) {
+    return this.scheduleRequest('DELETE', `/guilds/${guildId}/members/${userId}/roles/${roleId}`, undefined, options);
+  }
+
+  async requestJson(path, route, major, method, payload, { signal, reason } = {}) {
     const idempotent = IDEMPOTENT_METHODS.has(method);
     for (let attempt = 0; attempt <= this.maxRetries; attempt += 1) {
       await this.waitForRateLimit(route);
@@ -194,6 +210,7 @@ export class DiscordApiClient {
             headers: {
               Authorization: `Bot ${this.token}`,
               'User-Agent': USER_AGENT,
+              ...(reason ? { 'X-Audit-Log-Reason': encodeURIComponent(reason) } : {}),
               ...(payload === undefined || payload instanceof FormData ? {} : { 'Content-Type': 'application/json' }),
             },
             ...(payload === undefined ? {} : { body: payload instanceof FormData ? payload : JSON.stringify(payload) }),
