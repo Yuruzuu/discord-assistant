@@ -60,7 +60,7 @@ export async function runSupervisor({ childEntrypoint, configurationPath, comman
       activeExit = exit;
       const finished = (result) => { if (!exit.settled) { exit.settled = true; exit.result = result; settle(result); } };
       try {
-        child = spawnImpl(command, [childEntrypoint, configurationPath], { env: process.env, stdio: 'inherit' });
+        child = spawnImpl(command, [childEntrypoint, configurationPath], { env: process.env, stdio: 'inherit', windowsHide: true });
         child.once('error', () => finished({ spawnError: true }));
         child.once('close', (code, exitSignal) => finished({ code, signal: exitSignal }));
       } catch { finished({ spawnError: true }); }

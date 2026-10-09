@@ -112,11 +112,11 @@ export function createProactiveController(service, { entrypoint = process.env.DI
       ...(process.platform === 'darwin' ? ['/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex'] : []),
     ];
     const codexCommand = candidates.find((command) => {
-      const check = commandCheck(command, ['--version'], { encoding: 'utf8', timeout: 5000 });
+      const check = commandCheck(command, ['--version'], { encoding: 'utf8', timeout: 5000, windowsHide: true });
       return !check.error && check.status === 0;
     });
     if (!codexCommand) throw new Error('Codex CLI was not found. Set DISCORD_CODEX_COMMAND to its executable path.');
-    const authentication = commandCheck(codexCommand, ['login', 'status'], { encoding: 'utf8', timeout: 5000 });
+    const authentication = commandCheck(codexCommand, ['login', 'status'], { encoding: 'utf8', timeout: 5000, windowsHide: true });
     if (authentication.error || authentication.status !== 0) throw new Error('Codex CLI is not logged in. Run codex login before starting proactive mode.');
 
     const paths = targetPaths(account.id, channelId, directMessages, allServers);
@@ -143,7 +143,7 @@ export function createProactiveController(service, { entrypoint = process.env.DI
       const supervisor = join(dirname(entrypoint), entrypoint.endsWith('.cjs') ? 'supervisor.cjs' : 'supervisor.mjs');
       const supervised = existsSync(supervisor);
       if (supervised) await writeState(`${paths.configuration}.supervision.json`, { enabled: true });
-      child = spawnImpl(process.execPath, supervised ? [supervisor, entrypoint, paths.configuration] : [entrypoint, paths.configuration], { detached: true, stdio: ['ignore', log, log], env: process.env });
+      child = spawnImpl(process.execPath, supervised ? [supervisor, entrypoint, paths.configuration] : [entrypoint, paths.configuration], { detached: true, windowsHide: true, stdio: ['ignore', log, log], env: process.env });
       await new Promise((resolve, reject) => { child.once('spawn', resolve); child.once('error', reject); });
       const latestStatus = await readState(paths.status);
       await writeState(paths.status, { ...latestStatus, pid: child.pid });

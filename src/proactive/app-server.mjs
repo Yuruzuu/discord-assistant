@@ -17,7 +17,7 @@ export function createAppServer({ command, cwd, env, spawnImpl = spawn, onNotifi
     '--disable', 'shell_tool', '--disable', 'plugins', '--disable', 'hooks',
     '--disable', 'memories', '--disable', 'js_repl',
     '-c', 'approval_policy="never"', '-c', 'web_search="disabled"', '-c', 'analytics.enabled=false', '-c', 'otel.log_user_prompt=false',
-  ], { cwd, env, stdio: ['pipe', 'pipe', 'pipe'] });
+  ], { cwd, env, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
   const pending = new Map();
   const abandoned = new Map();
   const writes = [];
