@@ -20,7 +20,7 @@ function fixture(options = {}) {
 test('real tool actions describe their sanitized arguments without exposing model text or results', async () => {
   const { progress, sent } = fixture();
   await progress.receive({ stage: 'started', toolName: 'discord_search_messages', summary: 'private reasoning', arguments: { query: 'fate buff', channelIds: ['200000000000000001'], authorIds: ['400000000000000001'] }, result: 'private messages' });
-  assert.deepEqual(sent, [{ content: 'I’m currently searching <#200000000000000001> for messages with "fate buff" from <@400000000000000001>.', index: 0 }]);
+  assert.deepEqual(sent, [{ content: '-# 🔍 I’m currently searching <#200000000000000001> for messages with "fate buff" from <@400000000000000001>.', index: 0 }]);
   assert.ok(!JSON.stringify(sent).includes('private'));
   for (const toolName of ['reasoning', 'shell', 'constructor', '__proto__']) await progress.receive({ stage: 'started', toolName });
   await progress.receive({ stage: 'reasoning', toolName: 'discord_search_messages' });
@@ -55,14 +55,14 @@ test('only a completed longer search reports its result count', async () => {
   advance(5000);
   await progress.receive({ stage: 'completed', toolName: 'discord_search_messages', resultCount: 1 });
   await progress.receive({ stage: 'completed', toolName: 'discord_search_messages', resultCount: 50 });
-  assert.deepEqual(sent.map((entry) => entry.content), ['I’m currently searching the server for messages.', 'I’ve searched the server for messages and found *1* result.']);
+  assert.deepEqual(sent.map((entry) => entry.content), ['-# 🔍 I’m currently searching the server for messages.', '-# 🔍 I’ve searched the server for messages and found *1* result.']);
   progress.close();
 });
 
 test('failed lookups show a factual failure without disclosing raw errors', async () => {
   const { progress, sent } = fixture();
   await progress.receive({ stage: 'failed', toolName: 'discord_search_messages', error: 'secret credential error' });
-  assert.deepEqual(sent.map((entry) => entry.content), ['That search didn’t go through, so I don’t have those results yet.']);
+  assert.deepEqual(sent.map((entry) => entry.content), ['-# ⚠️ That search didn’t go through, so I don’t have those results yet.']);
   assert.ok(!JSON.stringify(sent).includes('secret'));
   progress.close();
 });
@@ -119,7 +119,7 @@ test('preparation and approved research tools describe activities without model 
     const progress = createProgressReporter({ send: async (content) => { sent.push(content); return { sentMessages: [{ message: { id: 'message' } }] }; }, edit: async (_, content) => { edits.push(content); } });
     await progress.receive({ stage: 'started', toolName, arguments: { file: '/Users/owner/secret-dir/notes.md', query: 'roadmap', url: 'https://user:token@docs.example.com/private?key=1' }, summary: 'private reasoning' });
     assert.equal(sent.length, 1, toolName);
-    assert.match(sent[0], /^I’m /);
+    assert.match(sent[0], /^-# \S+ I’m /);
     assert.match(sent[0], /\n```\n[A-Za-z_]+\(\{/);
     assert.ok(!/private|secret-dir|token|key=1|user:/.test(JSON.stringify([...sent, ...edits, ...progress.details()])), toolName);
     assert.equal(progress.details()[0].toolName, toolName);
@@ -133,7 +133,7 @@ test('owner cancellation edits an existing activity to stopped and never reports
   const progress = createProgressReporter({ send: async () => ({ sentMessages: [{ message: { id: 'message' } }] }), edit: async (_, content) => { edits.push(content); }, remove: async () => { removed = true; } });
   await progress.receive({ stage: 'started', toolName: 'project_search' });
   await progress.finish({ cancelled: true });
-  assert.deepEqual(edits, ['I’m searching your project files for "".\nStopped this answer.']);
+  assert.deepEqual(edits, ['-# 🗃️ I’m searching your project files for "".\n-# ⏹️ Stopped this answer.']);
   assert.equal(removed, false);
   await progress.receive({ stage: 'completed', toolName: 'project_search', resultCount: 5 });
   assert.equal(edits.length, 1, 'nothing reports success after a stop');
@@ -146,16 +146,16 @@ test('batch searches and app calls read like an assistant, and argument text can
   await progress.receive({ stage: 'started', toolName: 'discord_search_batch', arguments: { guildId: '100000000000000001', channelIds: ['200000000000000001'], searches } });
   await progress.receive({ stage: 'completed', toolName: 'discord_search_batch', arguments: { guildId: '100000000000000001', channelIds: ['200000000000000001'], searches }, resultCount: 42 });
   assert.deepEqual(lines, [
-    activeLine('I’m currently searching <#200000000000000001> and <#200000000000000002> for *4* keywords: "fate", "hero bow", "crimson moon" and *1* more.', 'discord_search_batch({"guildId":"100000000000000001","channelIds":["200000000000000001"]})'),
-    'I’ve searched <#200000000000000001> and <#200000000000000002> for *4* keywords: "fate", "hero bow", "crimson moon" and *1* more and found *42* results.',
+    activeLine('-# 🔎 I’m currently searching <#200000000000000001> and <#200000000000000002> for *4* keywords: "fate", "hero bow", "crimson moon" and *1* more.', 'discord_search_batch({"guildId":"100000000000000001","channelIds":["200000000000000001"]})'),
+    '-# 🔎 I’ve searched <#200000000000000001> and <#200000000000000002> for *4* keywords: "fate", "hero bow", "crimson moon" and *1* more and found *42* results.',
   ]);
   assert.ok(!lines[1].includes('```'), 'completed searches remove their trace immediately');
   await progress.receive({ stage: 'started', toolName: 'apps_call_tool', arguments: { tool: 'google_drive.get_spreadsheet_cells' } });
-  assert.equal(withoutTrace(lines.at(-1)).split('\n').at(-1), 'I’m reading spreadsheet cells in your Google Drive.');
+  assert.equal(withoutTrace(lines.at(-1)).split('\n').at(-1), '-# 🔌 I’m reading spreadsheet cells in your Google Drive.');
   assert.ok(lines.at(-1).endsWith('```\napps_call_tool({"tool":"google_drive.get_spreadsheet_cells"})\n```'));
   await progress.receive({ stage: 'started', toolName: 'discord_search_messages', arguments: { query: '@everyone <@&123456789012345678> **bold**\nline', channelIds: ['not-a-channel'] } });
   const last = withoutTrace(lines.at(-1)).split('\n').at(-1);
-  assert.equal(last, 'I’m currently searching the server for messages with "everyone &123456789012345678 bold line".');
+  assert.equal(last, '-# 🔍 I’m currently searching the server for messages with "everyone &123456789012345678 bold line".');
   assert.ok(!/[@<>*]/.test(last.replace(/<#\d+>|<@\d+>/g, '')));
   progress.close();
 });
@@ -174,19 +174,19 @@ test('the progress log edits each step from doing to done, defers throttled edit
   await progress.receive({ stage: 'started', toolName: 'apps_call_tool', callId: 'c', arguments: { tool: 'google_drive.search' } });
   clock = 3;
   await progress.receive({ stage: 'completed', toolName: 'apps_list_tools', callId: 'a', arguments: {} });
-  assert.deepEqual(sent, [activeLine('I’m checking what your connected apps can do.', 'apps_list_tools({})')]);
+  assert.deepEqual(sent, [activeLine('-# 🧩 I’m checking what your connected apps can do.', 'apps_list_tools({})')]);
   assert.equal(edits.length, 0, 'edits inside the throttle window are deferred');
   await wait(80);
-  assert.equal(edits.at(-1).content, ['I’ve checked your connected apps.', activeLine('I’m searching your Gmail.', 'apps_call_tool({"tool":"gmail.search_emails"})'), activeLine('I’m searching your Google Drive.', 'apps_call_tool({"tool":"google_drive.search"})')].join('\n'), 'the deferred edit catches up instead of being dropped');
+  assert.equal(edits.at(-1).content, ['-# 🧩 I’ve checked your connected apps.', activeLine('-# 🔌 I’m searching your Gmail.', 'apps_call_tool({"tool":"gmail.search_emails"})'), activeLine('-# 🔌 I’m searching your Google Drive.', 'apps_call_tool({"tool":"google_drive.search"})')].join('\n'), 'the deferred edit catches up instead of being dropped');
   clock = 100;
   await progress.receive({ stage: 'completed', toolName: 'apps_call_tool', callId: 'c', arguments: { tool: 'google_drive.search' } });
-  assert.equal(edits.at(-1).content, ['I’ve checked your connected apps.', activeLine('I’m searching your Gmail.', 'apps_call_tool({"tool":"gmail.search_emails"})'), 'I’ve searched your Google Drive.'].join('\n'), 'parallel calls of one tool are matched by call ID');
+  assert.equal(edits.at(-1).content, ['-# 🧩 I’ve checked your connected apps.', activeLine('-# 🔌 I’m searching your Gmail.', 'apps_call_tool({"tool":"gmail.search_emails"})'), '-# 🔌 I’ve searched your Google Drive.'].join('\n'), 'parallel calls of one tool are matched by call ID');
   clock = 200;
   await progress.receive({ stage: 'completed', toolName: 'apps_call_tool', callId: 'b', arguments: { tool: 'gmail.search_emails' } });
   await progress.receive({ stage: 'started', toolName: 'discord_search_messages', callId: 'd', arguments: { query: 'fate', channelIds: ['200000000000000001'] } });
   await progress.receive({ stage: 'failed', toolName: 'discord_search_messages', callId: 'd', arguments: { query: 'fate', channelIds: ['200000000000000001'] } });
   await progress.finish();
-  assert.deepEqual(edits.at(-1), { content: 'I checked your connected apps, and searched your Gmail and your Google Drive. One lookup didn’t work.', options: { components: [] } });
+  assert.deepEqual(edits.at(-1), { content: '-# ✅ I checked your connected apps, and searched your Gmail and your Google Drive. One lookup didn’t work.', options: { components: [] } });
   assert.ok(!edits.at(-1).content.includes('```'));
 });
 
@@ -198,7 +198,7 @@ test('null or malformed tool arguments never break the progress log', async () =
     await progress.receive({ stage: 'completed', toolName, callId: toolName, arguments: ['not', 'an', 'object'], resultCount: 2 });
   }
   assert.equal(lines.at(-1).split('\n').length, 5, 'every step still renders');
-  assert.match(lines.at(-1), /^I’ve searched the server for messages and found \*2\* results\./);
+  assert.match(lines.at(-1), /^-# 🔍 I’ve searched the server for messages and found \*2\* results\./);
   progress.close();
 });
 
@@ -214,19 +214,19 @@ test('connected-app steps say what is being searched or read, without exposing I
   ];
   for (const [index, [tool, input]] of calls.entries()) {
     await progress.receive({ stage: 'started', toolName: 'apps_call_tool', callId: String(index), arguments: { tool, arguments: input } });
-    if (index === 0) assert.equal(lines.at(-1), activeLine('I’m searching your Google Drive for "Q3 budget".', 'apps_call_tool({"tool":"google_drive.search"})'));
+    if (index === 0) assert.equal(lines.at(-1), activeLine('-# 🔌 I’m searching your Google Drive for "Q3 budget".', 'apps_call_tool({"tool":"google_drive.search"})'));
     await progress.receive({ stage: 'completed', toolName: 'apps_call_tool', callId: String(index), arguments: { tool, arguments: input } });
   }
   assert.equal(lines.at(-1), [
-    'I’ve searched your Google Drive for "Q3 budget".',
-    'I’ve read spreadsheet cells (Sheet1!A1:F40) in your Google Drive.',
-    'I’ve read a document in your Google Drive.',
-    'I’ve read an email thread in your Gmail.',
-    'I’ve read a PR patch "Fix fate scaling" in your GitHub.',
+    '-# 🔌 I’ve searched your Google Drive for "Q3 budget".',
+    '-# 🔌 I’ve read spreadsheet cells (Sheet1!A1:F40) in your Google Drive.',
+    '-# 🔌 I’ve read a document in your Google Drive.',
+    '-# 🔌 I’ve read an email thread in your Gmail.',
+    '-# 🔌 I’ve read a PR patch "Fix fate scaling" in your GitHub.',
   ].join('\n'));
   assert.ok(!lines.join('\n').includes('1AbCdEfGh'), 'file IDs never appear');
   await progress.finish();
-  assert.match(lines.at(-1), /^I searched your Google Drive for "Q3 budget", and read spreadsheet cells/);
+  assert.match(lines.at(-1), /^-# ✅ I searched your Google Drive for "Q3 budget", and read spreadsheet cells/);
 });
 
 test('active command traces mask credentials, escape injected fences and never expose private reasoning', async () => {
@@ -242,9 +242,9 @@ test('active command traces mask credentials, escape injected fences and never e
   assert.ok(progress.details().every((entry) => !Object.hasOwn(entry, 'arguments') && !Object.hasOwn(entry, 'command')));
   assert.ok(!/fixture-|private hidden thought|git status/.test(JSON.stringify(progress.details())));
   await progress.receive({ stage: 'completed', toolName: 'task_command', callId: 'task', arguments: { command } });
-  assert.equal(lines.at(-1), 'The coding agent finished that command.');
+  assert.equal(lines.at(-1), '-# 💻 The coding agent finished that command.');
   await progress.finish();
-  assert.equal(lines.at(-1), 'I ran the coding command.');
+  assert.equal(lines.at(-1), '-# ✅ I ran the coding command.');
 });
 
 test('secret masking covers readable query summaries as well as fenced arguments', async () => {

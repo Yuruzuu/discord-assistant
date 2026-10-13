@@ -170,7 +170,9 @@ call finishes. Edits are throttled to `intervalMs` but deferred rather than
 dropped. When the answer finishes, the log becomes a single summary sentence
 that groups verbs ("I checked your connected apps and your Gmail, and searched
 …") and its buttons are removed. A stopped or failed answer keeps its steps and
-adds a closing note. Arguments are sanitized as described in
+adds a closing note. Every line (steps, summary, closing note) is Discord
+subtext (`-# `) prefixed with the activity's `emoji` (⚠️ for failures, ✅ for the
+summary), so a new activity needs an `emoji` too. Arguments are sanitized as described in
 [security-invariants.md](security-invariants.md).
 
 Decoration callbacks ingest synchronously and coalesce behind bounded per-message

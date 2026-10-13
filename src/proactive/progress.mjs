@@ -65,35 +65,35 @@ const host = (url) => { try { return new URL(url).hostname; } catch { return 'th
 const filename = (file) => quote(String(file || 'that file').split(/[\\/]/).at(-1));
 
 const activities = {
-  pdf_read: { category: 'PDF', start: () => 'I’m reading the PDF attachment.', done: () => 'I’ve read the PDF attachment.', summary: () => ['read', 'the PDF attachment'] },
-  discord_read_pdf: { category: 'PDF', start: () => 'I’m opening that PDF attachment.', done: () => 'I’ve opened that PDF attachment.', summary: () => ['read', 'the PDF attachment'] },
-  apps_prepare_action: { category: 'approval', start: () => 'I’m preparing an app action for your approval.', done: () => 'I’ve prepared an app action for your approval.', summary: () => ['prepared', 'an app action for approval'] },
-  nova_prepare_reminder: { category: 'reminder', start: () => 'I’m preparing your reminder.', done: () => 'I’ve prepared your reminder for approval.', summary: () => ['prepared', 'your reminder'] },
-  nova_prepare_alert: { category: 'alert', start: () => 'I’m preparing your conditional alert.', done: () => 'I’ve prepared your alert for approval.', summary: () => ['prepared', 'your conditional alert'] },
-  nova_prepare_handoff: { category: 'handoff', start: () => 'I’m preparing the coding task handoff.', done: () => 'I’ve prepared the handoff for approval.', summary: () => ['prepared', 'the coding task handoff'] },
-  task_command: { category: 'command', start: () => 'The coding agent is running this command.', done: () => 'The coding agent finished that command.', summary: () => ['ran', 'the coding command'] },
-  discord_list_servers: { category: 'servers', start: () => 'I’m checking which servers I can see.', done: (_, count) => (Number.isSafeInteger(count) ? `I’ve found ${plural(count, 'server')} I can see.` : 'I’ve checked the servers I can see.'), summary: () => ['checked', 'which servers I can see'] },
-  discord_list_channels: { category: 'channels', start: () => 'I’m looking through the server’s channels.', done: (_, count) => (Number.isSafeInteger(count) ? `I’ve looked through ${plural(count, 'channel')} and threads.` : 'I’ve looked through the server’s channels.'), summary: () => ['looked through', 'the server’s channels'] },
-  discord_find_members: { category: 'members', start: (args) => `I’m looking up members matching ${asked(args)}.`, done: (args, count) => `I’ve looked up members matching ${asked(args)}${found(count, 'match')}.`, summary: (args) => ['looked up', `members matching ${asked(args)}`] },
-  discord_search_messages: { category: 'search', start: (args) => `I’m currently searching ${searchSubject(args)}.`, done: (args, count) => `I’ve searched ${searchSubject(args)}${found(count)}.`, summary: (args) => ['searched', searchSubject(args)] },
-  discord_read_activity: { category: 'search', start: (args) => `I’m reading everything posted in ${activitySubject(args)}.`, done: (args, count) => `I’ve read everything posted in ${activitySubject(args)}${found(count, 'message')}.`, summary: (args) => ['read', `everything posted in ${activitySubject(args)}`] },
-  discord_search_batch: { category: 'search', start: (args) => `I’m currently searching ${batchSubject(args)}.`, done: (args, count) => `I’ve searched ${batchSubject(args)}${found(count)}.`, summary: (args) => ['searched', batchSubject(args)] },
-  discord_message_context: { category: 'context', start: (args) => `I’m reading the conversation around that message${inChannel(args)}.`, done: (_, count) => (Number.isSafeInteger(count) ? `I’ve read ${plural(count, 'message')} around it.` : 'I’ve read the surrounding conversation.'), summary: (args) => ['read', `the conversation around a message${inChannel(args)}`] },
-  discord_browse_messages: { category: 'context', start: (args) => `I’m reading more of ${channelOr(args, 'the conversation')}.`, done: (args, count) => `I’ve read ${Number.isSafeInteger(count) ? plural(count, 'message') : 'more messages'}${inChannel(args, 'from')}.`, summary: (args) => ['read', `more of ${channelOr(args, 'the conversation')}`] },
-  discord_user_info: { category: 'profile', start: (args) => `I’m checking ${profile(args, 'that')}.`, done: (args) => `I’ve checked ${profile(args, 'that')}.`, summary: (args) => ['checked', profile(args, 'a')] },
-  discord_research_topic: { category: 'topic research', start: (args) => `I’m researching ${asked(args)} across the server’s discussions.`, done: (args) => `I’ve gathered what people said about ${asked(args)}.`, summary: (args) => ['researched', asked(args)] },
-  voice_transcribe: { category: 'voice transcription', start: () => 'I’m transcribing your voice note.', done: () => 'I’ve transcribed your voice note.', summary: () => ['transcribed', 'your voice note'] },
-  image_read: { category: 'images', start: () => 'I’m looking at the images you sent.', done: () => 'I’ve looked at the images.', summary: () => ['looked at', 'the images you sent'] },
-  reply_context: { category: 'reply context', start: () => 'I’m loading the message you replied to.', done: () => 'I’ve loaded the message you replied to.', summary: () => ['loaded', 'the message you replied to'] },
-  web_read_link: { category: 'linked page', start: (args) => `I’m reading ${host(args?.url)}.`, done: (args) => `I’ve read ${host(args?.url)}.`, summary: (args) => ['read', host(args?.url)] },
+  pdf_read: { emoji: '📄', category: 'PDF', start: () => 'I’m reading the PDF attachment.', done: () => 'I’ve read the PDF attachment.', summary: () => ['read', 'the PDF attachment'] },
+  discord_read_pdf: { emoji: '📄', category: 'PDF', start: () => 'I’m opening that PDF attachment.', done: () => 'I’ve opened that PDF attachment.', summary: () => ['read', 'the PDF attachment'] },
+  apps_prepare_action: { emoji: '📝', category: 'approval', start: () => 'I’m preparing an app action for your approval.', done: () => 'I’ve prepared an app action for your approval.', summary: () => ['prepared', 'an app action for approval'] },
+  nova_prepare_reminder: { emoji: '⏰', category: 'reminder', start: () => 'I’m preparing your reminder.', done: () => 'I’ve prepared your reminder for approval.', summary: () => ['prepared', 'your reminder'] },
+  nova_prepare_alert: { emoji: '🔔', category: 'alert', start: () => 'I’m preparing your conditional alert.', done: () => 'I’ve prepared your alert for approval.', summary: () => ['prepared', 'your conditional alert'] },
+  nova_prepare_handoff: { emoji: '🤝', category: 'handoff', start: () => 'I’m preparing the coding task handoff.', done: () => 'I’ve prepared the handoff for approval.', summary: () => ['prepared', 'the coding task handoff'] },
+  task_command: { emoji: '💻', category: 'command', start: () => 'The coding agent is running this command.', done: () => 'The coding agent finished that command.', summary: () => ['ran', 'the coding command'] },
+  discord_list_servers: { emoji: '🌐', category: 'servers', start: () => 'I’m checking which servers I can see.', done: (_, count) => (Number.isSafeInteger(count) ? `I’ve found ${plural(count, 'server')} I can see.` : 'I’ve checked the servers I can see.'), summary: () => ['checked', 'which servers I can see'] },
+  discord_list_channels: { emoji: '🗂️', category: 'channels', start: () => 'I’m looking through the server’s channels.', done: (_, count) => (Number.isSafeInteger(count) ? `I’ve looked through ${plural(count, 'channel')} and threads.` : 'I’ve looked through the server’s channels.'), summary: () => ['looked through', 'the server’s channels'] },
+  discord_find_members: { emoji: '👥', category: 'members', start: (args) => `I’m looking up members matching ${asked(args)}.`, done: (args, count) => `I’ve looked up members matching ${asked(args)}${found(count, 'match')}.`, summary: (args) => ['looked up', `members matching ${asked(args)}`] },
+  discord_search_messages: { emoji: '🔍', category: 'search', start: (args) => `I’m currently searching ${searchSubject(args)}.`, done: (args, count) => `I’ve searched ${searchSubject(args)}${found(count)}.`, summary: (args) => ['searched', searchSubject(args)] },
+  discord_read_activity: { emoji: '📰', category: 'search', start: (args) => `I’m reading everything posted in ${activitySubject(args)}.`, done: (args, count) => `I’ve read everything posted in ${activitySubject(args)}${found(count, 'message')}.`, summary: (args) => ['read', `everything posted in ${activitySubject(args)}`] },
+  discord_search_batch: { emoji: '🔎', category: 'search', start: (args) => `I’m currently searching ${batchSubject(args)}.`, done: (args, count) => `I’ve searched ${batchSubject(args)}${found(count)}.`, summary: (args) => ['searched', batchSubject(args)] },
+  discord_message_context: { emoji: '🧵', category: 'context', start: (args) => `I’m reading the conversation around that message${inChannel(args)}.`, done: (_, count) => (Number.isSafeInteger(count) ? `I’ve read ${plural(count, 'message')} around it.` : 'I’ve read the surrounding conversation.'), summary: (args) => ['read', `the conversation around a message${inChannel(args)}`] },
+  discord_browse_messages: { emoji: '📜', category: 'context', start: (args) => `I’m reading more of ${channelOr(args, 'the conversation')}.`, done: (args, count) => `I’ve read ${Number.isSafeInteger(count) ? plural(count, 'message') : 'more messages'}${inChannel(args, 'from')}.`, summary: (args) => ['read', `more of ${channelOr(args, 'the conversation')}`] },
+  discord_user_info: { emoji: '👤', category: 'profile', start: (args) => `I’m checking ${profile(args, 'that')}.`, done: (args) => `I’ve checked ${profile(args, 'that')}.`, summary: (args) => ['checked', profile(args, 'a')] },
+  discord_research_topic: { emoji: '🧠', category: 'topic research', start: (args) => `I’m researching ${asked(args)} across the server’s discussions.`, done: (args) => `I’ve gathered what people said about ${asked(args)}.`, summary: (args) => ['researched', asked(args)] },
+  voice_transcribe: { emoji: '🎙️', category: 'voice transcription', start: () => 'I’m transcribing your voice note.', done: () => 'I’ve transcribed your voice note.', summary: () => ['transcribed', 'your voice note'] },
+  image_read: { emoji: '🖼️', category: 'images', start: () => 'I’m looking at the images you sent.', done: () => 'I’ve looked at the images.', summary: () => ['looked at', 'the images you sent'] },
+  reply_context: { emoji: '↩️', category: 'reply context', start: () => 'I’m loading the message you replied to.', done: () => 'I’ve loaded the message you replied to.', summary: () => ['loaded', 'the message you replied to'] },
+  web_read_link: { emoji: '🔗', category: 'linked page', start: (args) => `I’m reading ${host(args?.url)}.`, done: (args) => `I’ve read ${host(args?.url)}.`, summary: (args) => ['read', host(args?.url)] },
   // Codex reports a search's query only when it finishes, so the started line stays generic until then.
-  web_search: { category: 'web search', start: (args) => (args.query ? `I’m searching the web for ${quote(args.query)}.` : args.url ? `I’m opening ${host(args.url)}.` : 'I’m searching the web.'), done: (args) => (args.query ? `I’ve searched the web for ${quote(args.query)}.` : args.url ? `I’ve opened ${host(args.url)}.` : 'I’ve searched the web.'), summary: (args) => (args.query ? ['searched', `the web for ${quote(args.query)}`] : args.url ? ['opened', host(args.url)] : ['searched', 'the web']) },
-  apps_list_tools: { category: 'connected apps', start: (args) => `I’m checking what ${yourApps(args)} can do.`, done: (args) => `I’ve checked ${yourApps(args)}.`, summary: (args) => ['checked', yourApps(args)] },
-  apps_call_tool: { category: 'connected app', start: (args) => { const action = appAction(args); return `I’m ${action.ing} ${action.phrase}.`; }, done: (args) => { const action = appAction(args); return `I’ve ${action.past} ${action.phrase}.`; }, summary: (args) => { const action = appAction(args); return [action.past, action.phrase]; } },
-  project_list: { category: 'projects', start: () => 'I’m checking your approved projects.', done: () => 'I’ve checked your approved projects.', summary: () => ['checked', 'your approved projects'] },
-  project_search: { category: 'project search', start: (args) => `I’m searching your project files for ${asked(args)}.`, done: (args, count) => `I’ve searched your project files for ${asked(args)}${found(count, 'match')}.`, summary: (args) => ['searched', `your project files for ${asked(args)}`] },
-  project_read_file: { category: 'project file', start: (args) => `I’m reading ${filename(args?.file)} from your project.`, done: (args) => `I’ve read ${filename(args?.file)}.`, summary: (args) => ['read', filename(args?.file)] },
-  read_tool_result: { category: 'stored results', start: () => 'I’m going through the rest of those results.', done: () => 'I’ve gone through more of those results.', summary: () => ['went through', 'more of those results'] },
+  web_search: { emoji: '🌍', category: 'web search', start: (args) => (args.query ? `I’m searching the web for ${quote(args.query)}.` : args.url ? `I’m opening ${host(args.url)}.` : 'I’m searching the web.'), done: (args) => (args.query ? `I’ve searched the web for ${quote(args.query)}.` : args.url ? `I’ve opened ${host(args.url)}.` : 'I’ve searched the web.'), summary: (args) => (args.query ? ['searched', `the web for ${quote(args.query)}`] : args.url ? ['opened', host(args.url)] : ['searched', 'the web']) },
+  apps_list_tools: { emoji: '🧩', category: 'connected apps', start: (args) => `I’m checking what ${yourApps(args)} can do.`, done: (args) => `I’ve checked ${yourApps(args)}.`, summary: (args) => ['checked', yourApps(args)] },
+  apps_call_tool: { emoji: '🔌', category: 'connected app', start: (args) => { const action = appAction(args); return `I’m ${action.ing} ${action.phrase}.`; }, done: (args) => { const action = appAction(args); return `I’ve ${action.past} ${action.phrase}.`; }, summary: (args) => { const action = appAction(args); return [action.past, action.phrase]; } },
+  project_list: { emoji: '📁', category: 'projects', start: () => 'I’m checking your approved projects.', done: () => 'I’ve checked your approved projects.', summary: () => ['checked', 'your approved projects'] },
+  project_search: { emoji: '🗃️', category: 'project search', start: (args) => `I’m searching your project files for ${asked(args)}.`, done: (args, count) => `I’ve searched your project files for ${asked(args)}${found(count, 'match')}.`, summary: (args) => ['searched', `your project files for ${asked(args)}`] },
+  project_read_file: { emoji: '📑', category: 'project file', start: (args) => `I’m reading ${filename(args?.file)} from your project.`, done: (args) => `I’ve read ${filename(args?.file)}.`, summary: (args) => ['read', filename(args?.file)] },
+  read_tool_result: { emoji: '📚', category: 'stored results', start: () => 'I’m going through the rest of those results.', done: () => 'I’ve gone through more of those results.', summary: () => ['went through', 'more of those results'] },
 };
 // The final edit condenses the log into one sentence, grouping repeated verbs: "I checked your connected apps and your Gmail, and searched …".
 function summarize(entries) {
@@ -109,6 +109,8 @@ function summarize(entries) {
   if (failed) text += ` ${failed === 1 ? 'One lookup' : `*${failed}* lookups`} didn’t work.`;
   return text.trim().slice(0, 1900);
 }
+// Each step is Discord subtext ("-#") so the trace stays visually quieter than the answer.
+const trace = (emoji, text) => `-# ${emoji} ${text}`;
 const failedText = (activity) => (activity.category === 'search' ? 'That search didn’t go through, so I don’t have those results yet.' : 'That lookup didn’t work, so I don’t have those results yet.');
 
 // Presentation has one active mutation and bounded, replaceable pending states. A timed-out
@@ -199,9 +201,9 @@ export function createProgressReporter({ send, edit, remove, signal, now = Date.
 
   function lineFor(entry, showTrace = true) {
     const activity = activities[entry.toolName];
-    if (entry.stage === 'failed') return failedText(activity);
-    if (entry.stage === 'done') return activity.done(entry.args, entry.count);
-    return activity.start(entry.args) + (showTrace ? `\n\`\`\`\n${commandTrace(entry.toolName, entry.args)}\n\`\`\`` : '');
+    if (entry.stage === 'failed') return trace('⚠️', failedText(activity));
+    if (entry.stage === 'done') return trace(activity.emoji, activity.done(entry.args, entry.count));
+    return trace(activity.emoji, activity.start(entry.args)) + (showTrace ? `\n\`\`\`\n${commandTrace(entry.toolName, entry.args)}\n\`\`\`` : '');
   }
 
   function renderLog(showTrace = true) {
@@ -209,7 +211,7 @@ export function createProgressReporter({ send, edit, remove, signal, now = Date.
     let first = 0;
     let size = lines.reduce((total, line) => total + line.length + 1, 0);
     while (first < lines.length - 1 && size > 1850) size -= lines[first++].length + 1;
-    return `${first ? `…and *${first}* earlier ${first === 1 ? 'step' : 'steps'}\n` : ''}${lines.slice(first).join('\n')}`;
+    return `${first ? `-# …and *${first}* earlier ${first === 1 ? 'step' : 'steps'}\n` : ''}${lines.slice(first).join('\n')}`;
   }
 
   async function flush(deliverySignal) {
@@ -253,12 +255,12 @@ export function createProgressReporter({ send, edit, remove, signal, now = Date.
   async function announce(event, activity, timestamp, resultCount, deliverySignal) {
     const identity = `${event.stage}:${activity.category}`;
     if (seen.has(identity)) return;
-    let content = activity.start(event.arguments);
+    let content = trace(activity.emoji, activity.start(event.arguments));
     if (event.stage === 'started') startedAt.set(activity.category, timestamp);
     else if (event.stage === 'completed') {
       if (activity.category !== 'search' || !startedAt.has('search') || timestamp - startedAt.get('search') < 5000) return;
-      content = activity.done(event.arguments, resultCount);
-    } else content = failedText(activity);
+      content = trace(activity.emoji, activity.done(event.arguments, resultCount));
+    } else content = trace('⚠️', failedText(activity));
 
     const firstSearch = event.stage === 'started' && activity.category === 'search';
     if (timestamp - lastAttemptAt < intervalMs && !firstSearch) return;
@@ -298,7 +300,8 @@ export function createProgressReporter({ send, edit, remove, signal, now = Date.
       try {
         // The log stays until the answer is over; then it becomes a one-sentence summary (or keeps the steps with a stop note) and loses its buttons.
         const log = entries.length ? `${renderLog(false)}\n` : '';
-        const content = cancelled ? `${log}Stopped this answer.` : failed ? `${log}This answer stopped before it finished. Use /nova status for details or try again.` : summarize(entries) || (remove ? '' : 'Finished checking.');
+        const summary = summarize(entries) || (remove ? '' : 'Finished checking.');
+        const content = cancelled ? `${log}${trace('⏹️', 'Stopped this answer.')}` : failed ? `${log}${trace('⚠️', 'This answer stopped before it finished. Use /nova status for details or try again.')}` : summary && trace('✅', summary);
         await delivery.final(async (deliverySignal) => {
           if (content) await edit(receipt, content, deliverySignal, { components: [] });
           else await remove(receipt, deliverySignal);
