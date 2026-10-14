@@ -8,12 +8,15 @@ import { registerProactiveTools } from './proactive/tools.mjs';
 import { readToolFields, executeSharedReadTool, readSnowflake as snowflake } from './proactive/read-tool-registry.mjs';
 import { createDiscordReadTools } from './proactive/read-tools.mjs';
 import { addReaction } from './reactions.mjs';
+import { embedSchema, linkButtonSchema } from './rich-messages.mjs';
 import { addMemberRole, CREATABLE_CHANNEL_TYPES, createCategory, createChannel, createRole, removeMemberRole } from './guild-admin.mjs';
 
 const messageFields = {
   content: z.string().max(2000).optional(),
   stickerIds: z.array(snowflake).max(3).default([]),
   gifUrl: z.string().url().max(2048).optional().describe('An existing HTTPS GIF or GIF page URL to embed in the message'),
+  embeds: z.array(embedSchema).max(10).optional().describe('Rich embed cards (title, description, fields, colour, images, footer); URLs must be HTTPS'),
+  buttons: z.array(linkButtonSchema).max(25).optional().describe('HTTPS link buttons shown under the message, five per row'),
 };
 
 export function createDiscordMcpServer(service, { novaOptions = {} } = {}) {
@@ -129,7 +132,7 @@ export function createDiscordMcpServer(service, { novaOptions = {} } = {}) {
 
   register(server, 'discord_send_message', {
     title: 'Send Discord Message',
-    description: "Send a message as the configured bot to a channel or thread. Only use when explicitly asked to send. Supports custom emoji markup in content and up to 3 server sticker IDs. Mention notifications are disabled unless allowMentions is true. Reuse the returned nonce when retrying the same send to prevent duplicates within Discord's nonce window.",
+    description: "Send a message as the configured bot to a channel or thread. Only use when explicitly asked to send. Supports custom emoji markup in content, up to 3 server sticker IDs, embeds and HTTPS link buttons. Mention notifications are disabled unless allowMentions is true. Reuse the returned nonce when retrying the same send to prevent duplicates within Discord's nonce window.",
     annotations: writeAnnotations,
     inputSchema: {
       guildId: snowflake.optional(),

@@ -1,6 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { setTimeout as wait } from 'node:timers/promises';
 import { assertSnowflake } from './discord-url.mjs';
+import { discordEmbeds, linkButtonRows } from './rich-messages.mjs';
 import { shapeEmoji, shapeMessage, shapeSticker } from './shapes.mjs';
 
 export async function listExpressions(service, { guildId, kind = 'all' }) {
@@ -20,7 +21,7 @@ export async function listExpressions(service, { guildId, kind = 'all' }) {
   };
 }
 
-function validateMessage({ content, stickerIds = [], gifUrl, nonce, replyToMessageId, mentionRepliedUser = false }) {
+function validateMessage({ content, stickerIds = [], gifUrl, embeds = [], buttons = [], nonce, replyToMessageId, mentionRepliedUser = false }) {
   if (content !== undefined && (typeof content !== 'string' || content.length > 2000)) {
     throw new Error('content must be a string of at most 2000 characters');
   }
@@ -33,25 +34,27 @@ function validateMessage({ content, stickerIds = [], gifUrl, nonce, replyToMessa
   }
   const messageContent = gifUrl ? [content, gifUrl].filter(Boolean).join('\n') : content;
   if (messageContent && messageContent.length > 2000) throw new Error('Message content including its GIF URL must be at most 2000 characters');
-  if (!messageContent?.trim() && stickerIds.length === 0) throw new Error('Provide message content or at least one sticker ID or GIF URL');
+  const payloadEmbeds = discordEmbeds(embeds);
+  const components = linkButtonRows(buttons);
+  if (!messageContent?.trim() && stickerIds.length === 0 && !payloadEmbeds.length) throw new Error('Provide message content or at least one sticker ID, GIF URL or embed');
   if (replyToMessageId) assertSnowflake(replyToMessageId, 'replyToMessageId');
   if (mentionRepliedUser && !replyToMessageId) throw new Error('mentionRepliedUser requires replyToMessageId');
   if (nonce !== undefined && (typeof nonce !== 'string' || nonce.length === 0 || nonce.length > 25)) {
     throw new Error('nonce must be a string of 1 to 25 characters');
   }
 
-  return messageContent;
+  return { content: messageContent, embeds: payloadEmbeds, components };
 }
 
-export async function sendMessage(service, { guildId, channelId, content, stickerIds = [], gifUrl, replyToMessageId, mentionRepliedUser = false, allowMentions = false, nonce }, { signal } = {}) {
+export async function sendMessage(service, { guildId, channelId, content, stickerIds = [], gifUrl, embeds = [], buttons = [], replyToMessageId, mentionRepliedUser = false, allowMentions = false, nonce }, { signal } = {}) {
   assertSnowflake(channelId, 'channelId');
   if (guildId) assertSnowflake(guildId, 'guildId');
-  validateMessage({ content, stickerIds, gifUrl, replyToMessageId, mentionRepliedUser, nonce });
+  validateMessage({ content, stickerIds, gifUrl, embeds, buttons, replyToMessageId, mentionRepliedUser, nonce });
 
   signal?.throwIfAborted();
   const resolution = await service.resolveChannel(channelId, guildId);
 
-  return sendResolvedMessage(resolution, { guildId, channelId, content, stickerIds, gifUrl, replyToMessageId, mentionRepliedUser, allowMentions, nonce }, signal);
+  return sendResolvedMessage(resolution, { guildId, channelId, content, stickerIds, gifUrl, embeds, buttons, replyToMessageId, mentionRepliedUser, allowMentions, nonce }, signal);
 }
 
 // Every send carries a nonce with enforce_nonce so Discord drops duplicates; a failure without a 4xx answer has an unknown outcome.
@@ -83,11 +86,13 @@ async function postMessage({ account, channel }, { guildId, channelId, nonce }, 
   };
 }
 
-export async function sendResolvedMessage(resolution, { guildId, channelId, content, stickerIds = [], gifUrl, replyToMessageId, mentionRepliedUser = false, allowMentions = false, mentionUserIds = [], nonce }, signal) {
-  const messageContent = validateMessage({ content, stickerIds, gifUrl, replyToMessageId, mentionRepliedUser, nonce });
+export async function sendResolvedMessage(resolution, { guildId, channelId, content, stickerIds = [], gifUrl, embeds = [], buttons = [], replyToMessageId, mentionRepliedUser = false, allowMentions = false, mentionUserIds = [], nonce }, signal) {
+  const { content: messageContent, embeds: payloadEmbeds, components } = validateMessage({ content, stickerIds, gifUrl, embeds, buttons, replyToMessageId, mentionRepliedUser, nonce });
   return postMessage(resolution, { guildId, channelId, nonce }, {
     ...(messageContent === undefined ? {} : { content: messageContent }),
     ...(stickerIds.length ? { sticker_ids: stickerIds } : {}),
+    ...(payloadEmbeds.length ? { embeds: payloadEmbeds } : {}),
+    ...(components.length ? { components } : {}),
     ...(replyToMessageId ? { message_reference: { message_id: replyToMessageId, channel_id: channelId, fail_if_not_exists: true } } : {}),
     allowed_mentions: {
       parse: allowMentions ? ['users', 'roles', 'everyone'] : [],

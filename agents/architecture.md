@@ -125,6 +125,7 @@ See [nova-pipeline.md](nova-pipeline.md) for the detailed lifecycle.
 | `server.mjs` | MCP tool registration (the public contract) |
 | `tool-results.mjs` | `register` (wraps handlers, so errors become `failure()`), `success`, annotations |
 | `messaging.mjs` | `sendMessage`, `sendResolvedMessage`, `sendMessageBatch`, `forwardMessages`, `forwardResolvedMessage`, `listExpressions` |
+| `rich-messages.mjs` | Shared embed and link-button schemas and converters (`discordEmbeds`, `linkButtonRows`), used by MCP sends and Nova replies |
 | `reactions.mjs` | Emoji normalisation and `addReaction` |
 | `search.mjs` | Paged guild message search (≤ 250 results; requests on one search route are sequential, per the client's rate-limit queue) and `searchMessagesBatch` |
 | `activity.mjs` | `readServerActivity`: date-window channel-history reader for recent activity and day summaries, plus time-zone and day-boundary helpers |

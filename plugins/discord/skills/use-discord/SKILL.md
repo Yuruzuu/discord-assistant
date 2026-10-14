@@ -56,7 +56,8 @@ bot, not the user's personal account. Personal DMs with other people are not ava
   Plain `:emoji_name:` text does not select a custom emoji. Check availability
   and observe the returned role restrictions.
 - `discord_send_message` posts as the bot. It accepts up to 2000 characters and
-  three stickers; sticker-only sends can omit content. Enable `allowMentions`
+  three stickers, plus optional `embeds` (rich cards) and `buttons` (HTTPS link
+  buttons); sticker- or embed-only sends can omit content. Enable `allowMentions`
   only when the user wants mention notifications.
 - Use ordinary messages in DMs and for standalone server mentions. Use
   `discord_reply` for server follow-up chains or when it clarifies which

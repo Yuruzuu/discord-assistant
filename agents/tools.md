@@ -51,7 +51,7 @@ The MCP server registers every `read-tools` tool not already defined in
 
 | Tool | Implementation | Notes |
 | --- | --- | --- |
-| `discord_send_message` | `messaging.sendMessage` | ≤ 2000 chars, ≤ 3 stickers, `gifUrl`, optional native reply, `nonce` |
+| `discord_send_message` | `messaging.sendMessage` | ≤ 2000 chars, ≤ 3 stickers, `gifUrl`, `embeds` ≤ 10 and link `buttons` ≤ 25 (`rich-messages.mjs`, HTTPS only), optional native reply, `nonce` |
 | `discord_reply` | `messaging.sendMessage` with `replyToMessageId` | reply ping off unless `mentionRepliedUser` |
 | `discord_send_messages` | `messaging.sendMessageBatch` | 1–5 bubbles, `intervalMs`, `batchId` → nonces `<batchId>:<i>` |
 | `discord_forward_messages` | `messaging.forwardMessages` | 1–10 native forwards (URL or channel and message IDs), in order, nonces `<batchId>:f<i>`. A forward carries no text |

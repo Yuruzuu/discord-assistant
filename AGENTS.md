@@ -40,6 +40,7 @@ src/
   service.mjs              DiscordService: multi-account routing, discovery, reads, images
   discord-api.mjs          DiscordApiClient: REST, rate limits, retries, concurrency
   messaging.mjs            send / reply / batch / forward helpers
+  rich-messages.mjs        embed and link-button validation shared by MCP sends and Nova
   shapes.mjs               raw Discord JSON → stable output shapes
   search.mjs, message-browser.mjs, users.mjs, reactions.mjs, discord-url.mjs, config.mjs
   tool-results.mjs         register(), success(), failure(), annotations

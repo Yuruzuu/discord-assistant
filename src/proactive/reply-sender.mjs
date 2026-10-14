@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { forwardResolvedMessage, markSendStatus, sendResolvedMessage } from '../messaging.mjs';
 import { normalizeReactionEmoji } from '../reactions.mjs';
+import { linkButtonRows } from '../rich-messages.mjs';
 import { splitDiscordText, validateGeneratedFiles } from './discord-chunks.mjs';
 import { shapeMessage } from '../shapes.mjs';
 import { createDecorationQueue } from './progress.mjs';
@@ -14,13 +15,15 @@ export function createReplySender(service, { guildId, channelId, listenerId, dir
   const statusMutations = new Map();
   const componentCards = new Set();
   const firstReplies = new Map();
+  const linkRows = new Map();
 
   async function attachComponents(target, trigger, confirmed, signal, factory) {
     if (!factory || signal?.aborted) return;
     try {
       const components = await factory(trigger, confirmed.message);
       signal?.throwIfAborted();
-      if (components?.length) await target.account.client.editMessage(channelId, confirmed.message.id, { components }, { signal });
+      // Editing components replaces them all, so owner buttons are appended after the reply's own link buttons.
+      if (components?.length) await target.account.client.editMessage(channelId, confirmed.message.id, { components: [...(linkRows.get(confirmed.message.id) || []), ...components].slice(0, 5) }, { signal });
     } catch { /* Controls are optional decoration on an already confirmed message. */ }
   }
 
@@ -93,13 +96,16 @@ export function createReplySender(service, { guildId, channelId, listenerId, dir
         batch.failedMessageIndex = position;
         const chunks = splitDiscordText([message.content, message.gifUrl].filter(Boolean).join('\n'));
         for (const [chunkIndex, chunk] of chunks.entries()) {
+          const last = chunkIndex === chunks.length - 1;
           const nonce = chunkIndex === 0 ? `${batch.batchId}:${position}` : `${batch.batchId}:${position}c${chunkIndex}`;
           const sent = await deliver(`${batch.batchId}:${position}:text:${chunkIndex}`, trigger, nonce, () => sendResolvedMessage(target, {
-            content: chunk, stickerIds: chunkIndex === 0 ? message.stickerIds : [], guildId, channelId,
+            content: chunk || undefined, stickerIds: chunkIndex === 0 ? message.stickerIds : [], guildId, channelId,
+            ...(last ? { embeds: message.embeds || [], buttons: message.buttons || [] } : {}),
             replyToMessageId: !directMessages && position === 0 && chunkIndex === 0 ? replyToMessageId : undefined,
             allowMentions: false, mentionRepliedUser: false, nonce,
           }, signal));
           batch.sentMessages.push(sent);
+          if (last && message.buttons?.length) { linkRows.set(sent.message.id, linkButtonRows(message.buttons)); if (linkRows.size > 1000) linkRows.delete(linkRows.keys().next().value); }
           if (position === 0 && chunkIndex === 0) rememberFirstReply(trigger, sent);
         }
       }
@@ -157,7 +163,7 @@ export function createReplySender(service, { guildId, channelId, listenerId, dir
         const nonce = `${batch.batchId}:x${index}`;
         const mentionUserIds = item.notify ? [...new Set([...item.content.matchAll(/<@!?(\d{17,20})>/g)].map((match) => match[1]))].slice(0, 5) : [];
         batch.sentMessages.push(await deliver(`${batch.batchId}:channel:${index}`, trigger, nonce, async () => ({ ...await sendResolvedMessage(target, {
-          channelId: target.channel.id, guildId: target.channel.guild_id, content: item.content, mentionUserIds, nonce,
+          channelId: target.channel.id, guildId: target.channel.guild_id, content: item.content || undefined, embeds: item.embeds || [], buttons: item.buttons || [], mentionUserIds, nonce,
         }, signal), crossChannel: true })));
       }
     });

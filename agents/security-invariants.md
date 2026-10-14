@@ -42,6 +42,7 @@ needs to relax one, stop and ask the human first.
 | Schedules and conditional checks require explicit owner opt-in, have bounded read-only conditions, and deliver only to the owner DM. Unknown outcomes halt; process leases prevent duplicate owners | `schedules`, `schedule-conditions`, `schedule-lease` |
 | Handoffs are owner-DM-only, use a selected existing T3 project and supported harness/model, and require initial task authorization plus exact per-operation approvals. T3 credentials never reach Nova's model. Unknown launches are observed by deterministic ID, never replayed | `task-handoffs`, `t3-client`, `owner-capabilities` |
 | GIFs, stickers and custom emoji must come from the supplied catalog. Reactions may target only supplied conversation messages | `reply-validation.mjs` |
+| Embeds and buttons (Nova and MCP) use HTTPS URLs without credentials, and buttons are link buttons only (no `custom_id`, so no interaction can be spoofed). Embed text cannot ping and its custom emoji are catalog-checked | `rich-messages.mjs`, `reply-validation.mjs` |
 | Generated files are in-memory text only, with safe basenames and size caps. They never come from the local filesystem | `discord-chunks.validateGeneratedFiles`, `discord-api.sendMessageFiles` |
 | Turn, tool-call and repeated-failure budgets are bounded | `conversation.mjs` |
 

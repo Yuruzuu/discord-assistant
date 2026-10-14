@@ -104,13 +104,13 @@ The final JSON is parsed with a strict zod `planSchema`:
 | Field | Limit | Checks |
 | --- | --- | --- |
 | `shouldReply` | bool | `false` drops messages, files and forwards (reactions are kept) |
-| `messages[]` | ≤ 5 | content ≤ 16000 (chunked later); `gifUrl` must be in `allowedGifUrls`; stickers must be available; custom emoji markup must exist in the catalog |
+| `messages[]` | ≤ 5 | content ≤ 16000 (chunked later); `gifUrl` must be in `allowedGifUrls`; stickers must be available; custom emoji markup (content and embed text) must exist in the catalog; `embeds` ≤ 3 and link `buttons` ≤ 5 are checked by `rich-messages.mjs` (HTTPS only) and sent on the last chunk. Empty arrays are dropped from the validated bubble |
 | `reactions[]` | ≤ 3 | target must be one of the supplied conversation messages; emoji normalised; deduped |
 | `files[]` | ≤ 3 | safe basename, text, ≤ 128 KiB each, ≤ 256 KiB total (`discord-chunks.validateGeneratedFiles`) |
 | `forwards[]` | ≤ 5 | snowflake `channelId` and `messageId`; deduped by message. Scope is checked later at send time |
 | `images[]` | ≤ 4 | handles (`img<n>`) of images returned by connected-app tools in this answer, deduped. Unknown handles fail at send time |
-| `channelMessages[]` | ≤ 3 | `{channelId, content ≤ 2000, notify}`. **Owner DM only** (otherwise the turn fails). The target is checked at send time by `readTools.sendTarget` |
-| `controls` | bool | `true` asks the host to attach the owner buttons to this reply. The model decides per answer, and it is dropped when `shouldReply` is false |
+| `channelMessages[]` | ≤ 3 | `{channelId, content ≤ 2000, notify, embeds, buttons}`; content may be empty when an embed is present. **Owner DM only** (otherwise the turn fails). The target is checked at send time by `readTools.sendTarget` |
+| `controls` | bool | `true` asks the host to attach the owner buttons to this reply, appended after any link buttons on that message (an edit replaces all components). The model decides per answer, and it is dropped when `shouldReply` is false |
 
 A reply with `shouldReply: true` needs at least one message, file or forward.
 If a published bubble differs from the final plan, the turn errors

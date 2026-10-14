@@ -125,7 +125,7 @@ that file; `tokenEnv` is an environment variable name, not a token.
 | `discord_fetch_attachment` | Fetch one selected image from a message or a direct Discord CDN/media URL. |
 | `discord_check_access` | Diagnose which configured bot can read a guild, channel, or message. |
 | `discord_list_expressions` | List custom emojis and stickers, with ready-to-use emoji markup, sticker IDs, availability, and role restrictions. |
-| `discord_send_message` | Send bot messages with text, custom emojis, and up to three server stickers. |
+| `discord_send_message` | Send bot messages with text, custom emojis, up to three server stickers, embeds and link buttons. |
 | `discord_reply` | Use Discord's native reply feature for a specific message, with optional reply notifications. |
 | `discord_send_messages` | Send one to five short message bubbles in order, reporting partial receipts if a send fails. |
 | `discord_create_channel` / `discord_create_category` | Create a text, voice, announcement, stage or forum channel (optionally under a category) or a category. Needs **Manage Channels**. |
@@ -198,6 +198,13 @@ natively. `mentionRepliedUser` controls the reply ping separately from other
 mentions, and defaults to false. `discord_send_message.replyToMessageId` also
 supports native replies. A deleted target causes the reply to fail instead of
 silently becoming an unrelated message.
+
+Use `embeds` for rich cards (up to 10, each with `title`, `description`, `url`,
+`color` as `#RRGGBB` or an integer, `author`, `fields`, `imageUrl`,
+`thumbnailUrl`, `footer` and an ISO `timestamp`; 6000 characters in total) and
+`buttons` for HTTPS link buttons (`{label, url}`, up to 25, five per row). Every
+embed and button URL must be HTTPS without credentials, and an embed-only message
+may omit content. Interactive buttons and webhooks are not supported.
 
 Use `gifUrl` to send an existing HTTPS GIF or GIF page URL, with or without text.
 Discord handles its preview. Content and the appended URL together must fit in
