@@ -9,6 +9,7 @@ needs to relax one, stop and ask the human first.
 | --- | --- | --- |
 | Only `directMessageOwnerId` can trigger replies. Bots, webhooks and other users are dropped before generation | `target.acceptsListenerMessage`, `gateway.mjs`, `engine.receive` | `proactive-engine`, `direct-messages`, `server-mentions` |
 | Only the owner can run controls (text `nova …`, `/nova`, buttons, `discord_nova_control`) | `engine.control`, `channel-runtime.control`, `daemon-controls.execute`, interaction handler in `gateway.mjs` | `nova-controls` |
+| Only owner chat messages can steer a running answer, only into the same owner's active chat batch (never task, command or scheduled batches), and only as text: attachments, stickers and forwards wait for their own turn so media still goes through context preparation | `engine.route`, `engine.steerInto` | `steering` |
 | A DM listener must target a DM channel whose only recipient is the owner | `target.assertOwnerDirectMessageChannel` (controller and runtime) | `direct-messages` |
 | Memory is saved only on explicit owner commands, never from ordinary chat | `memory.parseMemoryCommand`, `memory-commands.mjs`, prompt text | `memory` |
 

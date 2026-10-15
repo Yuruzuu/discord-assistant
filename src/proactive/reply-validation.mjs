@@ -44,7 +44,8 @@ export function createReplyValidator(context) {
     const parsed = planSchema.parse(value);
     const files = validateGeneratedFiles(parsed.files);
     const reactions = [...new Map(parsed.reactions.map((reaction) => {
-      if (!reactionTargets.has(reaction.messageId)) throw new Error('Codex selected a reaction outside the supplied conversation messages');
+      // Steered owner messages join triggerMessages after the turn starts, so they are checked at validation time.
+      if (!reactionTargets.has(reaction.messageId) && !(context.triggerMessages || []).some((message) => message.id === reaction.messageId)) throw new Error('Codex selected a reaction outside the supplied conversation messages');
       const emoji = normalizeReactionEmoji(reaction.emoji);
       return [`${reaction.messageId}:${emoji}`, { ...reaction, emoji }];
     })).values()];

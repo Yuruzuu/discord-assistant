@@ -1,7 +1,7 @@
 import { EventEmitter } from 'node:events';
 import { PassThrough, Writable } from 'node:stream';
 
-export function fakeCodexServer({ plans, hang = false, tools = {}, toolCalls = [], events = [], delayMs = 5, closeDelayMs = 0, accountType = 'chatgpt', interruptCompletes = true } = {}) {
+export function fakeCodexServer({ plans, hang = false, tools = {}, toolCalls = [], events = [], delayMs = 5, closeDelayMs = 0, accountType = 'chatgpt', interruptCompletes = true, steeredPlan = null } = {}) {
   const requests = [];
   const launches = [];
   const children = [];
@@ -49,7 +49,7 @@ export function fakeCodexServer({ plans, hang = false, tools = {}, toolCalls = [
           }
         }
         else if (['thread/unsubscribe', 'thread/compact/start'].includes(message.method)) reply({});
-        else if (message.method === 'turn/steer') reply({ turnId: message.params.expectedTurnId });
+        else if (message.method === 'turn/steer') { const steered = activeTurns.get(message.params.threadId); if (steered) steered.steered = true; reply({ turnId: message.params.expectedTurnId }); }
         else if (message.method === 'account/read') reply({ account: accountType === null ? null : { type: accountType, email: 'private@example.test', planType: 'plus' }, requiresOpenaiAuth: true });
         else if (message.method === 'account/rateLimits/read') reply({ rateLimits: { primary: { usedPercent: 25, windowDurationMins: 300, resetsAt: 123456 } } });
         else if (message.method === 'model/list') reply({ data: [{ id: 'fixture-model', model: 'fixture-model', displayName: 'Fixture', supportedReasoningEfforts: [{ reasoningEffort: 'low' }] }] });
@@ -71,6 +71,11 @@ export function fakeCodexServer({ plans, hang = false, tools = {}, toolCalls = [
             later(() => {
               if (activeTurn.interrupted) return;
               emit({ method: 'item/agentMessage/delta', params: { threadId, turnId, itemId, delta: text.slice(first) } });
+              // Codex consumes steering at its next model boundary, which writes a second, revised answer item in the same turn.
+              if (activeTurn.steered && steeredPlan) {
+                emit({ method: 'item/started', params: { threadId, turnId, item: { id: `${itemId}-steered`, type: 'agentMessage', phase: 'final_answer' } } });
+                emit({ method: 'item/agentMessage/delta', params: { threadId, turnId, itemId: `${itemId}-steered`, delta: JSON.stringify(steeredPlan) } });
+              }
               emit({ method: 'thread/tokenUsage/updated', params: { threadId, turnId, tokenUsage: { last: { cachedInputTokens: turns > 1 ? 1024 : 0, inputTokens: 2048 } } } });
               completedTurns += 1;
               activeTurns.delete(threadId);

@@ -22,14 +22,26 @@ How one owner message becomes Nova's reply. All modules are in `src/proactive/`.
 
 - Bot, webhook and duplicate messages are ignored (`seen` keeps the last 1000).
   Messages from anyone except the owner never get here.
-- Explicit `nova stop|pause|resume|status|details|reset|compact|steer|model|effort|fast`
+- Explicit `nova stop|pause|resume|status|details|reset|compact|steer|queue|model|effort|fast`
   messages go to `control()`.
 - **Mode.** `mentions` responds to a mention or a native reply to the bot.
   `questions` also responds to anything `isQuestion` matches. `all` responds to
   everything (DMs always use `all`).
 - **Batching.** Messages from the same author are merged for `batchWindowMs`
-  (0.5 s). The batch is flushed at 5 messages or after 5 s. The queue is capped
-  at 20 batches.
+  (0.5 s). The batch is flushed at 5 messages or after 5 s.
+- **Follow-ups mid-answer (`queueMode`, default `steer`).** A flushed owner chat
+  batch first joins a same-owner chat batch that is queued or waiting for
+  admission but not started (≤ 5 messages). Otherwise, while an answer is being
+  written: `steer` sends text-only messages into the running Codex turn
+  (`turn/steer`, waiting for the model to start and the turn to be admitted) and
+  appends them to the active batch, so they finish with it and are valid
+  reaction targets; `interrupt` stops the answer and queues the new batch;
+  `followup` always queues. Messages with attachments, stickers or forwards, a
+  refused steer, or an answer that already ended fall back to their own turn.
+  `/nova queue <mode>` changes and persists the mode per conversation.
+- **Full queue.** At `maxQueued` (20) the oldest queued chat batch is dropped
+  (ingress `skipped`), and a short excerpt of each dropped message is passed to
+  the next answer as `droppedMessages`.
 - **Pacing.** `cooldownMs` and `maxRepliesPerMinute` apply per engine. The
   all-servers listener admits at most two independent conversations through
   `reply-scheduler.mjs`, with one running turn per conversation key. Start-rate
@@ -79,6 +91,12 @@ How one owner message becomes Nova's reply. All modules are in `src/proactive/`.
   `web_read_link` until the next turn.
 - Owner controls on the live thread: `steer`, `stop`, `reset`, `compact`, and
   `configure` (model, effort, Fast).
+- A steer lands at Codex's next model boundary, so a turn that was already
+  writing its answer writes a second final item. After a steer, `replyItem`
+  starts a new reply stream for it: bubbles already published stay sent, the
+  revision streams after them, and the returned plan is the sent bubbles plus
+  the revision (capped at 5). Without a steer, a second final item is still fatal.
+- Codex `reasoning` items are reported as `reasoning` progress events.
 - `native-turn` binds the exact turn identity, buffers pre-admission output,
   and accepts only valid matching terminal outcomes. Confirmed cancellation or
   native failure retains a healthy thread; unknown settlement, malformed plans
@@ -170,7 +188,13 @@ call finishes. Edits are throttled to `intervalMs` but deferred rather than
 dropped. When the answer finishes, the log becomes a single summary sentence
 that groups verbs ("I checked your connected apps and your Gmail, and searched
 …") and its buttons are removed. A stopped or failed answer keeps its steps and
-adds a closing note. Every line (steps, summary, closing note) is Discord
+adds a closing note. Only the newest 6 steps are shown; older ones collapse into
+`-# …and *N* more steps` (also when the log nears Discord's length limit).
+Reasoning is not a step: while Codex reasons, a trailing `-# 💭 Thinking…` line is
+shown, and if reasoning lasts `thinkingDelayMs` (1.5 s) before any tool runs, it
+opens the progress message on its own, so the Stop answer button is available
+while Nova thinks. A log that only ever thought is deleted when the answer is
+done. Every line (steps, summary, closing note) is Discord
 subtext (`-# `) prefixed with the activity's `emoji` (⚠️ for failures, ✅ for the
 summary), so a new activity needs an `emoji` too. Arguments are sanitized as described in
 [security-invariants.md](security-invariants.md).

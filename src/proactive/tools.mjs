@@ -77,7 +77,7 @@ export function registerProactiveTools(server, service, controller = createProac
     annotations: writeAnnotations,
     inputSchema: {
       accountId: z.string().optional(), channelId: snowflake.optional(), guildId: snowflake.optional(), directMessages: z.boolean().default(false), allServers: z.boolean().default(false),
-      action: z.enum(['status', 'stop', 'pause', 'resume', 'details', 'reset', 'compact', 'model', 'effort', 'fast', 'budget', 'projects', 'voice', 'research', 'jobs', 'digest', 'deliveries', 'resolve-delivery', 'approval', 'approvals', 'task-approval', 'reminder', 'alert', 'handoff', 'tasks']),
+      action: z.enum(['status', 'stop', 'pause', 'resume', 'details', 'reset', 'compact', 'model', 'effort', 'fast', 'queue', 'budget', 'projects', 'voice', 'research', 'jobs', 'digest', 'deliveries', 'resolve-delivery', 'approval', 'approvals', 'task-approval', 'reminder', 'alert', 'handoff', 'tasks']),
       value: z.string().max(4000).optional(), operation: z.enum(['list', 'status', 'add', 'remove', 'run', 'stop', 'start', 'catalog', 'steer', 'update', 'resolve']).optional(), id: z.string().max(240).optional(),
       configuration: z.record(z.string(), z.unknown()).optional(), decision: z.enum(['approve', 'decline', 'accept', 'cancel']).optional(), taskId: z.string().max(200).optional(), requestId: z.string().max(200).optional(),
       delivered: z.boolean().optional(),

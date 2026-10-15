@@ -171,7 +171,7 @@ export function createDecorationQueue({ signal, timeoutMs = 2000, maxPending = 3
   return { enqueue, close, settle, idle: () => running || Promise.resolve(), final: async (operation, finalSignal, timeout = 1000) => { close(); if (await settle(timeout)) await deliver(operation, finalSignal, timeout); } };
 }
 
-export function createProgressReporter({ send, edit, remove, signal, now = Date.now, intervalMs = 1500, maxMessages = 3, deliveryTimeoutMs = 2000, finishTimeoutMs = 1000, onSent = () => {}, onError = () => {} }) {
+export function createProgressReporter({ send, edit, remove, signal, now = Date.now, intervalMs = 1500, maxMessages = 3, maxSteps = 6, thinkingDelayMs = 1500, deliveryTimeoutMs = 2000, finishTimeoutMs = 1000, onSent = () => {}, onError = () => {} }) {
   const cancellation = new AbortController();
   const startedAt = new Map();
   const delivery = createDecorationQueue({ signal, timeoutMs: deliveryTimeoutMs, maxPending: maxMessages, onError });
@@ -186,6 +186,9 @@ export function createProgressReporter({ send, edit, remove, signal, now = Date.
   let lastEditAt = -Infinity;
   let dirty = false;
   let flushTimer = null;
+  // Reasoning is a trailing "Thinking…" line, never a step. It only opens the log after a short delay, so quick answers post no log.
+  let thinking = false;
+  let thinkingTimer = null;
 
   // Without edits every update is a new message, so only the first start of each kind of work (and a slow search's result) is announced.
   const seen = new Set();
@@ -208,17 +211,18 @@ export function createProgressReporter({ send, edit, remove, signal, now = Date.
 
   function renderLog(showTrace = true) {
     const lines = entries.map((entry) => lineFor(entry, showTrace));
-    let first = 0;
-    let size = lines.reduce((total, line) => total + line.length + 1, 0);
+    if (showTrace && thinking) lines.push(trace('💭', 'Thinking…'));
+    let first = Math.max(0, lines.length - (showTrace && thinking ? maxSteps + 1 : maxSteps));
+    let size = lines.slice(first).reduce((total, line) => total + line.length + 1, 0);
     while (first < lines.length - 1 && size > 1850) size -= lines[first++].length + 1;
-    return `${first ? `-# …and *${first}* earlier ${first === 1 ? 'step' : 'steps'}\n` : ''}${lines.slice(first).join('\n')}`;
+    return `${first ? `-# …and *${first}* more ${first === 1 ? 'step' : 'steps'}\n` : ''}${lines.slice(first).join('\n')}`;
   }
 
   async function flush(deliverySignal) {
     if (!dirty || closed) return;
     dirty = false;
     const content = renderLog();
-    if (content === displayed || (!receipt && attempted >= maxMessages)) return;
+    if (!content || content === displayed || (!receipt && attempted >= maxMessages)) return;
     await attempt(deliverySignal, async (sendSignal) => {
       if (receipt) await edit(receipt, content, sendSignal);
       else { attempted += 1; receipt = await send(content, sendSignal, 0); if (!sendSignal.aborted && !closed) onSent(receipt); }
@@ -242,6 +246,10 @@ export function createProgressReporter({ send, edit, remove, signal, now = Date.
       else entries.push({ callId: event.callId || null, toolName: event.toolName, args: event.arguments, stage, count: resultCount });
     }
     if (entries.length > 60) entries.shift();
+    return schedule(timestamp, deliverySignal);
+  }
+
+  function schedule(timestamp, deliverySignal) {
     dirty = true;
     const wait = receipt ? intervalMs - (timestamp - lastEditAt) : 0;
     if (wait <= 0) return delivery.enqueue('log', (queueSignal) => flush(AbortSignal.any([queueSignal, deliverySignal].filter(Boolean))));
@@ -250,6 +258,15 @@ export function createProgressReporter({ send, edit, remove, signal, now = Date.
       flushTimer = setTimeout(() => { flushTimer = null; void delivery.enqueue('log', flush); }, wait);
       flushTimer.unref?.();
     }
+  }
+
+  function think(active, timestamp, deliverySignal) {
+    if (thinking === active) return;
+    thinking = active;
+    if (receipt || entries.length) return schedule(timestamp, deliverySignal);
+    if (!active || thinkingTimer) return;
+    thinkingTimer = setTimeout(() => { thinkingTimer = null; if (thinking && !closed && !receipt && !entries.length) void schedule(now(), deliverySignal); }, thinkingDelayMs);
+    thinkingTimer.unref?.();
   }
 
   async function announce(event, activity, timestamp, resultCount, deliverySignal) {
@@ -272,6 +289,7 @@ export function createProgressReporter({ send, edit, remove, signal, now = Date.
 
   async function report(rawEvent, deliverySignal) {
     if (closed || signal?.aborted || deliverySignal?.aborted || (!edit && attempted >= maxMessages)) return;
+    if (rawEvent?.toolName === 'reasoning') return edit && ['started', 'completed', 'failed'].includes(rawEvent.stage) ? think(rawEvent.stage === 'started', now(), deliverySignal) : undefined;
     const activity = Object.hasOwn(activities, rawEvent?.toolName) ? activities[rawEvent.toolName] : null;
     if (!activity || !['started', 'completed', 'failed'].includes(rawEvent.stage)) return;
     // Tool arguments come from the model and may be null or malformed; renderers only ever see a plain object.
@@ -282,7 +300,7 @@ export function createProgressReporter({ send, edit, remove, signal, now = Date.
     return edit ? logStep(event, timestamp, resultCount, deliverySignal) : announce(event, activity, timestamp, resultCount, deliverySignal);
   }
 
-  function close() { closed = true; cancellation.abort(); delivery.close(); clearTimeout(flushTimer); flushTimer = null; }
+  function close() { closed = true; cancellation.abort(); delivery.close(); clearTimeout(flushTimer); clearTimeout(thinkingTimer); flushTimer = null; thinkingTimer = null; }
 
   return {
     // Progress is decoration: a rendering or delivery bug is reported, never allowed to reject the tool callback or stall later updates.

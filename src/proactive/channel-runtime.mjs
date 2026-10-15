@@ -122,6 +122,11 @@ export async function createChannelRuntime(service, configuration, bot, { warm =
         return result;
       }
       if (['model', 'effort', 'fast'].includes(request.action) && !request.value) return generateReply.diagnostics();
+      if (request.action === 'queue' && request.value) {
+        const result = await engine.control(request);
+        await settingsStore.configureConversation(account.id, channel.id, { queueMode: result.queueMode }, request.userId);
+        return result;
+      }
       const result = await engine.control(request);
       const patch = request.action === 'model' ? { model: request.value } : request.action === 'effort' ? { reasoningEffort: request.value } : request.action === 'fast' ? { serviceTier: request.value === 'on' || request.value === true ? 'priority' : 'default' } : request.action === 'pause' || request.action === 'resume' ? { paused: request.action === 'pause' } : null;
       if (patch) await settingsStore.configureConversation(account.id, channel.id, patch, request.userId);

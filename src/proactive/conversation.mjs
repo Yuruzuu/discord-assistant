@@ -69,6 +69,7 @@ export function createConversationReply({ command = process.env.CODEX_CLI_PATH |
 
   function bindTurn(turn, id) {
     turn.turnId = id;
+    turn.admit?.();
     acceptTerminal(turn, turn.native.bind(id));
     const buffered = turn.earlyEvents.splice(0);
     turn.earlyBytes = 0;
@@ -120,15 +121,29 @@ export function createConversationReply({ command = process.env.CODEX_CLI_PATH |
       const turn = active;
       progress(turn, { stage: method === 'item/started' ? 'started' : 'completed', toolName: 'web_search', callId: id,
         arguments: { query: query || action?.query || action?.queries?.[0] || '', url: action?.url || '' } });
+    } else if ((method === 'item/started' || method === 'item/completed') && parameters.item.type === 'reasoning') {
+      progress(active, { stage: method === 'item/started' ? 'started' : 'completed', toolName: 'reasoning', callId: parameters.item.id });
     } else if (method === 'item/agentMessage/delta') {
       if (active.phases.get(parameters.itemId) === 'commentary') return;
-      active.itemId ||= parameters.itemId;
-      if (active.itemId !== parameters.itemId) { failTurn(Object.assign(new Error('Codex emitted multiple final reply items'), { novaFatal: true })); return; }
+      if (!replyItem(active, parameters.itemId)) return;
       if (!active.firstText) { active.firstText = true; metrics.record('model_first_text', metrics.now() - active.startedAt); }
       try { active.stream.push(parameters.delta); } catch (error) { error.novaFatal = true; failTurn(error); }
     } else if (method === 'item/completed' && parameters.item.type === 'agentMessage' && parameters.item.phase !== 'commentary') {
+      if (!replyItem(active, parameters.item.id)) return;
       if (!active.stream.text()) { try { active.stream.push(parameters.item.text); } catch (error) { error.novaFatal = true; failTurn(error); } }
     }
+  }
+
+  // A steer lands at Codex's next model boundary, so a turn that was already writing its answer writes a second, revised one.
+  // Bubbles already published stay sent; the revision continues after them.
+  function replyItem(turn, itemId) {
+    turn.itemId ||= itemId;
+    if (turn.itemId === itemId) return true;
+    if (!turn.steered) { failTurn(Object.assign(new Error('Codex emitted multiple final reply items'), { novaFatal: true })); return false; }
+    turn.itemId = itemId;
+    turn.offset = turn.emitted;
+    turn.stream = turn.createStream();
+    return true;
   }
 
   async function callTool(parameters) {
@@ -297,20 +312,27 @@ export function createConversationReply({ command = process.env.CODEX_CLI_PATH |
     const published = [];
     readTools?.beginTurn?.();
     const validator = createReplyValidator(context);
-    const turn = { resolve, reject, native: createNativeTurn(), earlyEvents: [], earlyBytes: 0, startedAt: metrics.now(), stopExecution: metrics.start('native_execution'), phases: new Map(), delivery: Promise.resolve(), turnId: null, error: null, cancel: new AbortController(), toolCalls: new Map(), failures: new Map(), results: new Map(), onProgress };
+    const turn = { offset: 0, emitted: 0, steered: false, resolve, reject, native: createNativeTurn(), earlyEvents: [], earlyBytes: 0, startedAt: metrics.now(), stopExecution: metrics.start('native_execution'), phases: new Map(), delivery: Promise.resolve(), turnId: null, error: null, cancel: new AbortController(), toolCalls: new Map(), failures: new Map(), results: new Map(), onProgress };
+    turn.admitted = new Promise((accept) => { turn.admit = accept; });
+    turn.settled = new Promise((accept) => { turn.settle = accept; });
+    completion.then(turn.settle, turn.settle);
     const deliverySignal = signal ? AbortSignal.any([signal, turn.cancel.signal]) : turn.cancel.signal;
     turn.signal = deliverySignal;
-    turn.stream = createReplyStream((raw, index) => {
+    turn.createStream = () => createReplyStream((raw, index) => {
       let message;
       try { message = validator.message(raw); } catch (error) { error.novaFatal = true; throw error; }
-      if (!onMessage) return;
+      const position = turn.offset + index;
+      turn.emitted = Math.max(turn.emitted, position + 1);
+      // Past Discord's five-bubble cap a revised answer waits for the final plan instead of streaming.
+      if (!onMessage || position >= 5) return;
       turn.delivery = turn.delivery.then(async () => {
         deliverySignal.throwIfAborted();
-        await onMessage(message, index, deliverySignal);
+        await onMessage(message, position, deliverySignal);
         published.push(message);
       });
       turn.delivery.catch(failTurn);
     });
+    turn.stream = turn.createStream();
     active = turn;
     const timer = setTimeout(() => failTurn(Object.assign(new Error(turn.native.outcome()?.status === 'completed' ? 'Reply delivery exceeded the turn deadline' : 'Codex reply generation timed out'), { code: 'NOVA_TURN_TIMEOUT' })), timeoutMs);
     const abort = () => failTurn(new DOMException('Proactive listener stopped', 'AbortError'));
@@ -337,9 +359,12 @@ export function createConversationReply({ command = process.env.CODEX_CLI_PATH |
       let plan;
       try { plan = validator.plan(JSON.parse(turn.stream.text())); }
       catch (error) { error.novaFatal = true; throw error; }
-      if (published.length && (!plan.shouldReply || published.some((message, index) => JSON.stringify(message) !== JSON.stringify(plan.messages[index])))) {
+      const earlier = published.slice(0, turn.offset);
+      const current = published.slice(turn.offset);
+      if (current.length && (!plan.shouldReply || current.some((message, index) => JSON.stringify(message) !== JSON.stringify(plan.messages[index])))) {
         throw Object.assign(new Error('Codex changed a reply bubble after publishing it'), { novaFatal: true });
       }
+      if (earlier.length) plan = { ...plan, shouldReply: true, messages: [...earlier, ...(plan.shouldReply ? plan.messages : [])].slice(0, 5) };
       if (prepared.commit()) for (const message of [...nearby, ...(context.triggerMessages || [])]) {
         if (message.id && (!newestContextId || BigInt(message.id) > BigInt(newestContextId))) newestContextId = message.id;
       }
@@ -354,6 +379,7 @@ export function createConversationReply({ command = process.env.CODEX_CLI_PATH |
       throw error;
     } finally {
       clearTimeout(timer); signal?.removeEventListener('abort', abort);
+      turn.settle();
       turn.stopExecution();
       if (active === turn) active = null;
     }
@@ -376,9 +402,13 @@ export function createConversationReply({ command = process.env.CODEX_CLI_PATH |
   };
   respond.steer = async (text, options = {}, signal) => {
     signal?.throwIfAborted();
-    if (!active?.turnId || active.error) return { accepted: false };
     if (typeof text !== 'string' || !text.trim() || text.length > 16000) throw new Error('Steering requires a nonempty correction of at most 16000 characters');
     const turn = active;
+    // A turn still waiting for Codex to admit it is steered as soon as it has an ID.
+    if (turn && !turn.turnId && !turn.error) await Promise.race([turn.admitted, turn.settled]);
+    signal?.throwIfAborted();
+    if (!turn || active !== turn || !turn.turnId || turn.error || turn.native.outcome()) return { accepted: false };
+    turn.steered = true;
     const result = await server.request('turn/steer', { threadId, expectedTurnId: turn.turnId, input: [{ type: 'text', text }], ...(options.clientUserMessageId ? { clientUserMessageId: options.clientUserMessageId } : {}) });
     return { accepted: true, turnId: result.turnId || turn.turnId };
   };

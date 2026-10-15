@@ -1,19 +1,29 @@
 import { setTimeout as wait } from 'node:timers/promises';
 import { acceptsListenerMessage, mentionsBot, directMessageOwnerId } from './target.mjs';
 import { createDecorationQueue, createProgressReporter } from './progress.mjs';
+import { shapeMessage } from '../shapes.mjs';
+
+export const queueModes = ['steer', 'followup', 'interrupt'];
+// Steering sends text only; attachments, stickers and forwards need context preparation, so those wait for their own turn.
+const steerable = (message) => !message.hostProvenance && !!String(message.content || '').trim() && !message.attachments?.length && !message.sticker_items?.length && !message.stickers?.length && !message.message_snapshots?.length;
+const steerText = (messages) => JSON.stringify({ ownerSteering: {
+  note: 'The owner sent these messages while you were answering. Treat them as part of the same request and fold them into this answer. Bubbles you already sent stay sent; keep the whole answer within five bubbles.',
+  triggerMessages: messages.map((message) => shapeMessage(message)),
+} });
 
 export function isQuestion(content) {
   return /\?|^(?:\s|<@!?\d+>)*(?:what|why|how|where|when|who|can|could|would|should|is|are|does|do|help)\b/i.test(content || '');
 }
 
-export function createProactiveEngine({ botUserId, guildId, channelId, directMessages = false, mode = 'mentions', startPaused = false, batchWindowMs = 500, cooldownMs = 5000, maxRepliesPerMinute = 6, resolveReplyAuthor, getContext, generateReply, sendReplies, parseCommand = () => null, handleCommands, scheduleReply = (operation) => operation(), startTyping = () => () => {}, now = Date.now, sleep = wait, onStatus = () => {}, onTiming = () => {}, onControl, onBatchComplete = () => {} }) {
+export function createProactiveEngine({ botUserId, guildId, channelId, directMessages = false, mode = 'mentions', queueMode = 'steer', maxQueued = 20, startPaused = false, batchWindowMs = 500, cooldownMs = 5000, maxRepliesPerMinute = 6, resolveReplyAuthor, getContext, generateReply, sendReplies, parseCommand = () => null, handleCommands, scheduleReply = (operation) => operation(), startTyping = () => () => {}, now = Date.now, sleep = wait, onStatus = () => {}, onTiming = () => {}, onControl, onBatchComplete = () => {} }) {
   const pending = new Map();
   const queue = [];
   const seen = new Set();
   const replyTimes = [];
   const cancellation = new AbortController();
   const statusUpdates = new Map();
-  const statistics = { received: 0, triggered: 0, replyBatches: 0, sentMessages: 0, streamedMessages: 0, progressMessages: 0, progressErrors: 0, forwards: 0, channelMessages: 0, reactions: 0, reactionErrors: 0, lastReactionError: null, lastFirstResponseMs: null, lastFirstActivityMs: null, skipped: 0, errors: 0, queued: 0, lastError: null };
+  if (!queueModes.includes(queueMode)) throw new Error('Unknown queue mode');
+  const statistics = { received: 0, triggered: 0, steered: 0, overflowed: 0, replyBatches: 0, sentMessages: 0, streamedMessages: 0, progressMessages: 0, progressErrors: 0, forwards: 0, channelMessages: 0, reactions: 0, reactionErrors: 0, lastReactionError: null, lastFirstResponseMs: null, lastFirstActivityMs: null, skipped: 0, errors: 0, queued: 0, lastError: null };
   let busy = false;
   let stopped = false;
   let lastReplyAt = -Infinity;
@@ -25,9 +35,13 @@ export function createProactiveEngine({ botUserId, guildId, channelId, directMes
   let activeProgress;
   let activeMessageIds = new Set();
   const cleanupTimers = new Set();
+  let activeBatch = null;
+  let admitting = null;
+  let steering = Promise.resolve();
+  const overflow = [];
 
   function status() {
-    return { ...statistics, queued: queue.length + pending.size, generating: busy, paused, mode };
+    return { ...statistics, queued: queue.length + pending.size, generating: busy, paused, mode, queueMode };
   }
 
   function report() { onStatus(status()); }
@@ -74,8 +88,8 @@ export function createProactiveEngine({ botUserId, guildId, channelId, directMes
     return batches;
   }
 
-  function discard(batches) {
-    discarded = discarded.catch(() => {}).then(async () => { for (const batch of batches) await onBatchComplete(batch.messages, 'cancelled'); });
+  function discard(batches, outcome = 'cancelled') {
+    discarded = discarded.catch(() => {}).then(async () => { for (const batch of batches) await onBatchComplete(batch.messages, outcome); });
     return discarded;
   }
 
@@ -106,6 +120,11 @@ export function createProactiveEngine({ botUserId, guildId, channelId, directMes
       if (!['mentions', 'questions', 'all'].includes(value)) throw new Error('Unknown conversation mode');
       mode = value;
     }
+    else if (action === 'queue') {
+      if (value && !queueModes.includes(value)) throw new Error(`Queue mode must be ${queueModes.join(', ')}`);
+      if (value) queueMode = value;
+      result.queueMode = queueMode;
+    }
     else if (action === 'steer') {
       if (typeof value !== 'string' || !value.trim() || value.length > 4000) throw new Error('Provide a correction of 1 to 4000 characters');
       if (!activeCancellation || !generateReply.steer) throw new Error('There is no active answer to steer');
@@ -125,6 +144,10 @@ export function createProactiveEngine({ botUserId, guildId, channelId, directMes
   }
 
   async function processBatch(batch, turnCancellation = new AbortController()) {
+    let markGenerating = () => {};
+    Object.assign(batch, { started: true, done: false, generating: new Promise((accept) => { markGenerating = accept; }) });
+    if (admitting === batch) admitting = null;
+    activeBatch = batch;
     activeCancellation = turnCancellation;
     activeMessageIds = new Set(batch.messages.map((message) => message.id));
     const signal = AbortSignal.any([cancellation.signal, turnCancellation.signal]);
@@ -156,7 +179,7 @@ export function createProactiveEngine({ botUserId, guildId, channelId, directMes
       onError: () => { statistics.progressErrors += 1; report(); },
     });
     activeProgress = progress;
-    const onProgress = (event, deliverySignal) => { statusReaction(event.stage === 'failed' ? 'error' : 'tool'); void progress.receive(event, deliverySignal); };
+    const onProgress = (event, deliverySignal) => { if (event.toolName !== 'reasoning') statusReaction(event.stage === 'failed' ? 'error' : 'tool'); void progress.receive(event, deliverySignal); };
     const onMessage = async (message, index, deliverySignal) => {
       if (index !== streamed || streamed >= 5) throw new Error('Reply bubbles arrived out of order');
       signal.throwIfAborted();
@@ -181,7 +204,10 @@ export function createProactiveEngine({ botUserId, guildId, channelId, directMes
         if (!directMessages && context.recentMessages?.some((message) => BigInt(message.id) > BigInt(trigger.id) && message.authorId !== botUserId)) replyToMessageId = trigger.id;
         signal.throwIfAborted();
         const inferenceStartedAt = now();
-        try { response = await generateReply({ ...context, triggerMessages: batch.messages, mode }, signal, { onProgress, onMessage }); }
+        const droppedMessages = overflow.splice(0);
+        markGenerating(true);
+        // triggerMessages is the batch's own array, so steered messages join it for reaction checks and context bookkeeping.
+        try { response = await generateReply({ ...context, triggerMessages: batch.messages, mode, ...(droppedMessages.length ? { droppedMessages } : {}) }, signal, { onProgress, onMessage }); }
         finally { timing('inference', inferenceStartedAt); }
       }
       for (const reaction of response.reactions || []) {
@@ -227,6 +253,8 @@ export function createProactiveEngine({ botUserId, guildId, channelId, directMes
         lastReplyAt = now();
       }
     } finally {
+      batch.done = true;
+      markGenerating(false);
       clearTimeout(stalledTimer);
       lastProgressDetails = progress.details();
       await progress.finish({ failed, cancelled: signal.aborted, signal: cancellation.signal });
@@ -238,7 +266,10 @@ export function createProactiveEngine({ botUserId, guildId, channelId, directMes
       const cleanupTimer = setTimeout(() => { void statusReaction(undefined); cleanupTimers.delete(cleanupTimer); }, 5000);
       cleanupTimer.unref?.();
       cleanupTimers.add(cleanupTimer);
-      await onBatchComplete(batch.messages, signal.aborted ? 'cancelled' : failed ? 'failed' : 'sent');
+      if (activeBatch === batch) activeBatch = null;
+      batch.outcome = signal.aborted ? 'cancelled' : failed ? 'failed' : 'sent';
+      batch.completed = true;
+      await onBatchComplete([...batch.messages], batch.outcome);
     }
     report();
   }
@@ -259,6 +290,7 @@ export function createProactiveEngine({ botUserId, guildId, channelId, directMes
           continue;
         }
         const batch = queue.shift();
+        if (!commandBatch) admitting = batch;
         if (commandBatch) await processBatch(batch);
         else {
           const turnCancellation = new AbortController();
@@ -277,6 +309,7 @@ export function createProactiveEngine({ botUserId, guildId, channelId, directMes
               return processBatch(batch, turnCancellation);
             }, signal, { conversationKey: `${guildId || 'dm'}:${channelId}` });
           } catch (error) {
+            if (admitting === batch) admitting = null;
             if (!admitted) {
               activeCancellation = null;
               activeMessageIds.clear();
@@ -296,9 +329,55 @@ export function createProactiveEngine({ botUserId, guildId, channelId, directMes
     if (!batch || stopped) return;
     clearTimeout(batch.timer);
     pending.delete(authorId);
-    queue.push(batch);
+    if (!route(batch, authorId)) queue.push(batch);
     report();
     void drain();
+  }
+
+  // Owner follow-ups join work that has not started yet, steer the answer being written, or (interrupt mode) replace it.
+  function route(batch, authorId) {
+    if (batch.kind !== 'chat' || authorId !== directMessageOwnerId || queueMode === 'followup') return false;
+    const sameOwner = (candidate) => candidate?.kind === 'chat' && candidate.messages[0]?.author?.id === authorId;
+    const waiting = [...queue].reverse().concat(admitting || []).find((candidate) => sameOwner(candidate) && !candidate.started && candidate.messages.length + batch.messages.length <= 5);
+    if (waiting) { waiting.messages.push(...batch.messages); return true; }
+    const active = activeBatch;
+    if (!sameOwner(active) || active.done) return false;
+    if (queueMode === 'interrupt') { void interrupt(); return false; }
+    if (!generateReply.steer || !batch.messages.every(steerable)) return false;
+    steering = steering.catch(() => {}).then(() => steerInto(active, batch));
+    return true;
+  }
+
+  async function steerInto(active, batch) {
+    let accepted = false;
+    try {
+      // generating settles true once the model starts, or false if the batch ended during preparation.
+      if (await active.generating && !active.done && !stopped) accepted = (await generateReply.steer(steerText(batch.messages)))?.accepted === true;
+    } catch { accepted = false; }
+    if (accepted) {
+      active.messages.push(...batch.messages);
+      if (activeBatch === active) for (const message of batch.messages) activeMessageIds.add(message.id);
+      statistics.steered += batch.messages.length;
+      for (const message of batch.messages) setStatusReaction(undefined, message);
+      if (active.completed) await onBatchComplete(batch.messages, active.outcome);
+    } else if (stopped) await onBatchComplete(batch.messages, 'cancelled');
+    // The answer ended (or Codex refused the steer) before the follow-up landed, so it gets its own turn.
+    else { queue.push(batch); void drain(); }
+    report();
+  }
+
+  // A full queue keeps a short summary of what it drops and hands it to the next answer instead of silently skipping it.
+  function makeRoom() {
+    if (queue.length + pending.size < maxQueued) return true;
+    const index = queue.findIndex((candidate) => candidate.kind === 'chat');
+    if (index < 0) return false;
+    const [dropped] = queue.splice(index, 1);
+    overflow.push(...dropped.messages.map((message) => ({ messageId: message.id, authorId: message.author?.id || null, excerpt: String(message.content || '').replace(/\s+/g, ' ').trim().slice(0, 280), attachments: message.attachments?.length || 0 })));
+    overflow.splice(0, Math.max(0, overflow.length - maxQueued));
+    statistics.overflowed += dropped.messages.length;
+    for (const message of dropped.messages) setStatusReaction(undefined, message);
+    void discard([dropped], 'skipped');
+    return true;
   }
 
   async function receive(message) {
@@ -309,7 +388,7 @@ export function createProactiveEngine({ botUserId, guildId, channelId, directMes
     if (seen.size > 1000) seen.delete(seen.values().next().value);
 
     const commandText = (message.content || '').replace(/^\s*<@!?\d+>\s*/, '').trim();
-    const explicitControl = /^\/?nova\s+(stop|pause|resume|status|details|reset|compact|steer|model|effort|fast)(?:\s*:\s*|\s+)?([\s\S]*)$/i.exec(commandText);
+    const explicitControl = /^\/?nova\s+(stop|pause|resume|status|details|reset|compact|steer|queue|model|effort|fast)(?:\s*:\s*|\s+)?([\s\S]*)$/i.exec(commandText);
     if (explicitControl) {
       const action = explicitControl[1].toLowerCase();
       if (['stop', 'pause', 'resume', 'status', 'details', 'reset', 'compact'].includes(action) && explicitControl[2].trim()) return false;
@@ -333,7 +412,7 @@ export function createProactiveEngine({ botUserId, guildId, channelId, directMes
     }
     const kind = message.hostProvenance ? 'task' : parseCommand(message) ? 'command' : 'chat';
     if (existing && existing.kind !== kind) { flush(authorId); existing = null; }
-    if (!existing && queue.length + pending.size >= 20) { statistics.skipped += 1; report(); return false; }
+    if (!existing && !makeRoom()) { statistics.skipped += 1; report(); return false; }
 
     const batch = existing || { messages: [], firstReceivedAt: now(), timer: null, kind };
     batch.messages.push(message);

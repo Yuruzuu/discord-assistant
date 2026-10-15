@@ -171,13 +171,14 @@ bot, not the user's personal account. Personal DMs with other people are not ava
   select `directMessages: true`; server-wide conversation controls select
   `allServers: true` and the target server/channel IDs. Keep routing scope exact.
 - Owner `/nova` commands and equivalent `nova <action>` text commands support
-  status/details, stop, pause/resume, model/effort/fast/budget, steer, reset/compact,
+  status/details, stop, pause/resume, model/effort/fast/budget, steer, queue, reset/compact,
   voice/projects/deliveries, research/jobs and digest management. Stop cancels the
   answer while continuing to listen; pausing and stopping a listener differ.
 - Model settings affect the selected conversation. Status can report available
   Codex subscription usage windows; unavailable values are not zero usage.
   Requested Fast/model settings are not proof of provider fulfillment.
-- Corrections use steering on an active turn. Do not claim that an interrupted
+- Owner messages sent mid-answer steer it by default (`queue steer|followup|interrupt`).
+  Corrections use steering on an active turn. Do not claim that an interrupted
   answer completed or that a correction was applied until the host confirms it.
 - Progress and answer buttons are owner-only, conversation-bound, single-use and
   expire after 30 minutes. Remember message is an explicit memory approval.

@@ -290,6 +290,15 @@ searches, image reads, voice transcription and other tool activity. **Details**
 shows tool status, counts and timings; raw internal reasoning, tool arguments
 and source message contents are not activity text. Ordinary chat needs no
 progress filler. Typing continues during actual preparation and delivery.
+When Nova thinks for more than a moment, the progress message shows a
+"Thinking…" line with a **Stop answer** button. Only the latest six steps are
+listed; older ones collapse into "…and N more steps".
+
+Messages you send while Nova is answering steer that answer by default: text is
+added to the running Codex turn, so one answer covers everything you said. Bubbles
+already sent stay, and Nova continues after them. Messages with attachments wait
+for their own turn. If the queue fills up (20 waiting batches), the oldest are
+dropped and a short summary of them is given to the next answer.
 
 Complete reply bubbles are validated and sent as the model streams them. The
 first bubble gives a short useful answer; later bubbles add details. Raw partial
@@ -470,6 +479,7 @@ by the host; other users cannot operate them.
 | `/nova model`, `/nova effort`, `/nova fast` | Inspect or set the conversation model, effort or requested Fast tier. |
 | `/nova budget` | Set the whole-turn budget in seconds, from 1 to 900. |
 | `/nova steer` | Send an explicit correction to a currently running turn. |
+| `/nova queue` | Choose what happens to messages you send while Nova is answering: `steer` (default) folds text into the running answer, `followup` answers them afterwards, `interrupt` stops the answer and starts over with the newest message. |
 | `/nova reset`, `/nova compact` | Reset ephemeral context or ask Codex to compact it; approved memory remains separate. |
 | `/nova voice`, `/nova projects` | Inspect the configured speech backend and approved project list. |
 | `/nova deliveries` | Inspect durable delivery receipts and uncertain operations. |

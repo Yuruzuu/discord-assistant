@@ -9,7 +9,7 @@ const conversationSchema = z.object({
   model: z.string().min(1).max(128).optional(), reasoningEffort: z.string().regex(/^[a-z][a-z0-9_-]{0,31}$/).optional(),
   serviceTier: z.enum(['priority', 'default']).optional(), timeoutMs: z.number().int().min(1000).max(900000).optional(),
   toolTimeoutMs: z.number().int().min(1000).max(120000).optional(), maxToolCalls: z.number().int().min(1).max(100).optional(),
-  paused: z.boolean().optional(),
+  paused: z.boolean().optional(), queueMode: z.enum(['steer', 'followup', 'interrupt']).optional(),
 }).strict();
 const settingsSchema = z.object({
   version: z.literal(1).default(1),

@@ -48,6 +48,7 @@ tests that cover it. Tool details are in [tools.md](tools.md).
 | Controls | `nova <action>` text, `/nova` slash command, buttons (reply buttons only when the plan sets `controls`), `discord_nova_control` | `controls.mjs`, `engine.mjs` (`control`), `channel-runtime.mjs` (`control`), `daemon-controls.mjs` | `nova-controls`, `codex-runtime-controls` |
 | Model, effort and Fast settings | `nova model/effort/fast` | `conversation.mjs` (`configure`), `nova-settings.mjs` | `codex-runtime-controls` |
 | Steer, stop, cancel, pause, reset, compact | `nova steer/stop/pause/…` | `engine.mjs`, `conversation.mjs` | `nova-controls` |
+| Mid-answer follow-ups steer by default; queue modes; full-queue summaries; thinking line with Stop; 6-step log collapse | `nova queue steer/followup/interrupt` | `engine.mjs`, `conversation.mjs`, `progress.mjs` | `steering` |
 | Durable deliveries and recovery | automatic; `nova deliveries`, `resolve-delivery` | `delivery-journal.mjs`, `reply-sender.mjs` (`deliver`), `channel-runtime.mjs` (`recover`) | `delivery-journal`, `channel-runtime-integration` |
 | Research jobs (new public thread) | `nova research …`, `nova jobs …` | `research-jobs.mjs`, `server-mentions.mjs` (`bindThread`) | `research-jobs` |
 | Opted-in digests | `nova digest add/list/run/remove` (owner DM listener) | `digests.mjs` | `proactive-digests` |

@@ -20,7 +20,7 @@ export function parseNovaCommand(content, botUserId) {
     return { action, operation, id: rest[0] };
   }
   if (simpleActions.includes(action)) return value ? null : { action };
-  if (['model', 'effort', 'fast', 'steer', 'research', 'budget'].includes(action)) return { action, value };
+  if (['model', 'effort', 'fast', 'steer', 'queue', 'research', 'budget'].includes(action)) return { action, value };
   if (action === 'jobs') {
     const [operation = 'list', id] = value.split(/\s+/);
     if (!['list', 'stop', 'status'].includes(operation)) return null;
@@ -45,6 +45,7 @@ export function novaSlashCommand() {
   const subcommand = (name, description, options = []) => ({ type: 1, name, description, options });
   return { name: 'nova', description: 'Owner-only Nova controls', dm_permission: true, options: [
     ...simpleActions.map((action) => subcommand(action, `${action} Nova in this conversation`)),
+    subcommand('queue', 'How follow-ups sent mid-answer are handled', [{ ...textOption('value', 'steer, followup or interrupt; omit to inspect'), choices: ['steer', 'followup', 'interrupt'].map((mode) => ({ name: mode, value: mode })) }]),
     ...['model', 'effort', 'fast', 'steer', 'budget'].map((action) => subcommand(action, `${action} setting or correction`, [textOption('value', 'Requested value; omit to inspect', action === 'steer')])),
     subcommand('research', 'Start a research job in a new public thread', [textOption('request', 'Research request', true), textOption('guild', 'Server ID for requests from DMs'), textOption('channel', 'Parent channel ID for requests from DMs')]),
     subcommand('jobs', 'Inspect or stop research jobs', [textOption('operation', 'list, status, or stop'), textOption('id', 'Job ID')]),
