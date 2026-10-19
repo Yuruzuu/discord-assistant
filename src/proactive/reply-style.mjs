@@ -15,7 +15,7 @@ const buttons = { type: 'array', maxItems: 5, items: { type: 'object', additiona
 
 export const replySchema = {
   type: 'object', additionalProperties: false,
-  required: ['shouldReply', 'messages', 'reactions', 'files', 'forwards', 'controls', 'images', 'channelMessages'],
+  required: ['shouldReply', 'messages', 'reactions', 'files', 'forwards', 'controls', 'images', 'channelMessages', 'expressionUploads'],
   properties: {
     shouldReply: { type: 'boolean' },
     messages: {
@@ -46,6 +46,11 @@ export const replySchema = {
       type: 'array', maxItems: 3,
       items: { type: 'object', additionalProperties: false, required: ['channelId', 'content', 'notify', 'embeds', 'buttons'],
         properties: { channelId: { type: 'string' }, content: { type: 'string', maxLength: 2000 }, notify: { type: 'boolean' }, embeds, buttons } },
+    },
+    expressionUploads: {
+      type: 'array', maxItems: 25,
+      items: { type: 'object', additionalProperties: false, required: ['guildId', 'kind', 'filePath', 'name', 'tags'],
+        properties: { guildId: { type: 'string' }, kind: { type: 'string', enum: ['emoji', 'sticker'] }, filePath: { type: 'string', maxLength: 4096 }, name: nullable({ type: 'string', maxLength: 32 }), tags: nullable({ type: 'string', maxLength: 200 }) } },
     },
     files: { type: 'array', maxItems: 3, items: { type: 'object', additionalProperties: false, required: ['name', 'content'], properties: { name: { type: 'string', maxLength: 100 }, content: { type: 'string', maxLength: 131072 } } } },
   },

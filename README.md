@@ -354,6 +354,16 @@ the users named in the message, and only when you ask. Roles, @everyone and
 same answer, and the host confirms each post, or explains a failure, in your
 DM.
 
+From the owner DM, you can also ask Nova to upload emojis or stickers from your
+computer ("upload the stickers in my Downloads/stickers folder, split across
+testing server and Vanguards Dev"). Nova browses folders with
+`local_list_images`, which sees file names and sizes but never contents, then
+uploads up to 25 files per reply to any server the bot can see; the bot needs
+**Create Expressions** there. Names come from the file names unless you give
+better ones, names a server already has are skipped, and the host lists what
+was uploaded, skipped or failed in your DM. Set `"localFiles": false` in
+`nova.json` to turn this off.
+
 Nova can choose up to three emoji reactions to supplied messages in the current
 conversation, with or without a written answer. Unicode emoji are unrestricted;
 custom emoji must be usable by the bot. Discord enforces availability and

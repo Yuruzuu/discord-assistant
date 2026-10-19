@@ -128,15 +128,16 @@ The final JSON is parsed with a strict zod `planSchema`:
 | `forwards[]` | ≤ 5 | snowflake `channelId` and `messageId`; deduped by message. Scope is checked later at send time |
 | `images[]` | ≤ 4 | handles (`img<n>`) of images returned by connected-app tools in this answer, deduped. Unknown handles fail at send time |
 | `channelMessages[]` | ≤ 3 | `{channelId, content ≤ 2000, notify, embeds, buttons}`; content may be empty when an embed is present. **Owner DM only** (otherwise the turn fails). The target is checked at send time by `readTools.sendTarget` |
+| `expressionUploads[]` | ≤ 25 | `{guildId, kind: emoji\|sticker, filePath, name, tags}` (nullable `name`/`tags` are dropped). **Owner DM only** (otherwise the turn fails). `filePath` must be absolute (or `~`); deduped by server, kind and path. The server is checked at send time by `readTools.expressionTarget` |
 | `controls` | bool | `true` asks the host to attach the owner buttons to this reply, appended after any link buttons on that message (an edit replaces all components). The model decides per answer, and it is dropped when `shouldReply` is false |
 
-A reply with `shouldReply: true` needs at least one message, file or forward.
+A reply with `shouldReply: true` needs at least one message, file, image, forward, channel post or upload.
 If a published bubble differs from the final plan, the turn errors
 ("changed a reply bubble after publishing it").
 
 ## 7. Delivery (`engine.processBatch` → `reply-sender.mjs`)
 
-Order: **reactions → remaining (unstreamed) bubbles → files → images → channel posts + host confirmation → forwards → owner buttons (only if `controls`).**
+Order: **reactions → remaining (unstreamed) bubbles → files → images → channel posts + host confirmation → emoji/sticker uploads + host confirmation → forwards → owner buttons (only if `controls`).**
 
 - **Native reply.** Only in servers, and only on the first bubble or chunk, when
   the batch has more than one message, the trigger is itself a reply, or newer
@@ -152,6 +153,7 @@ Order: **reactions → remaining (unstreamed) bubbles → files → images → c
   | images | `<batchId>:i` | `<batchId>:images` |
   | channel post *i* | `<batchId>:x<i>` | `<batchId>:channel:<i>` |
   | post confirmation | `<batchId>:k` | `<batchId>:confirmation` |
+  | upload confirmation | `<batchId>:ke` | `<batchId>:expression-confirmation` |
   | forward *i* | `<batchId>:w<i>` | `<batchId>:forward:<i>` |
 
   Discord nonces are at most 25 characters, so keep suffixes short.
@@ -165,6 +167,16 @@ Order: **reactions → remaining (unstreamed) bubbles → files → images → c
   Journal entries use the DM channel ID as metadata. The engine then sends a
   host-written confirmation ("Posted in <#…>: link" or "I couldn't post…") to
   the DM, and a failure still fails the turn.
+- **Emoji and sticker uploads.** Each `expressionUploads` item goes through
+  `expressionTarget` (owner DM only, refused after connected-app reads), then
+  `expression-uploads.createEmoji` / `createSticker`, which re-check the path,
+  extension, size and file signature. Uploads are not messages, so they are not
+  journaled: they are idempotent by name instead (the sender lists the server's
+  emojis or stickers once per server and kind and skips taken names), which also
+  makes a replayed plan safe. A rejected item does not stop the rest; an unknown
+  outcome stops the batch and reports how many were not attempted. The engine
+  then sends a host-written summary (uploaded / skipped / couldn't upload) to the
+  DM and counts `statistics.expressionUploads`.
 - **Forwards.** Each source goes through `forwardSource`
   (`readTools.forwardSource`, which uses the same scope rules as reading). The
   sender then calls `messaging.forwardResolvedMessage`. Forwards land only in

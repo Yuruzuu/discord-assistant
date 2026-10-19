@@ -5,8 +5,10 @@ import { linkButtonRows } from '../rich-messages.mjs';
 import { splitDiscordText, validateGeneratedFiles } from './discord-chunks.mjs';
 import { shapeMessage } from '../shapes.mjs';
 import { createDecorationQueue } from './progress.mjs';
+import { createEmoji, createSticker, expressionName } from '../expression-uploads.mjs';
+import { basename } from 'node:path';
 
-export function createReplySender(service, { guildId, channelId, listenerId, directMessages = false, deliveryJournal, progressComponents, messageComponents, statusTimeoutMs = 2000, forwardSource = async () => { throw new Error('Forwarding is unavailable in this conversation'); }, sharedImage = () => null, sendTarget = async () => { throw new Error('Posting in other channels is unavailable in this conversation'); } }) {
+export function createReplySender(service, { guildId, channelId, listenerId, directMessages = false, deliveryJournal, progressComponents, messageComponents, statusTimeoutMs = 2000, forwardSource = async () => { throw new Error('Forwarding is unavailable in this conversation'); }, sharedImage = () => null, sendTarget = async () => { throw new Error('Posting in other channels is unavailable in this conversation'); }, expressionTarget = async () => { throw new Error('Uploading emojis or stickers is unavailable in this conversation'); } }) {
   let currentTrigger;
   let resolution;
   const temporaryReactions = new Map();
@@ -169,13 +171,42 @@ export function createReplySender(service, { guildId, channelId, listenerId, dir
     });
   };
 
-  send.confirmation = async (content, trigger, signal) => {
+  // Each host confirmation kind has its own operation, so a turn that both posts elsewhere and uploads gets both confirmations.
+  send.confirmation = async (content, trigger, signal, { key = 'confirmation', suffix = 'k' } = {}) => {
     signal?.throwIfAborted();
     const target = await resolve(trigger);
     const batchId = batchIdFor(trigger);
-    const nonce = `${batchId}:k`;
-    const receipt = await deliver(`${batchId}:confirmation`, trigger, nonce, () => sendResolvedMessage(target, { channelId, guildId, content: content.slice(0, 2000), nonce }, signal));
+    const nonce = `${batchId}:${suffix}`;
+    const receipt = await deliver(`${batchId}:${key}`, trigger, nonce, () => sendResolvedMessage(target, { channelId, guildId, content: content.slice(0, 2000), nonce }, signal));
     return { batchId, sentMessages: [receipt] };
+  };
+
+  // Uploads are not messages, so instead of the delivery journal they are idempotent by name: a replayed plan skips names the server already has.
+  // A rejected upload does not stop the rest; an unknown outcome does, because that file may already exist.
+  send.expressionUploads = async (items, trigger, signal) => {
+    const result = { uploaded: [], skipped: [], failed: [], notAttempted: 0 };
+    if (!items?.length) return result;
+    if (items.length > 25) throw new Error('Provide at most 25 emoji or sticker uploads');
+    const taken = new Map();
+    for (const [index, item] of items.entries()) {
+      signal?.throwIfAborted();
+      const label = { guildId: item.guildId, kind: item.kind, file: basename(item.filePath), name: item.name || expressionName(item.filePath, item.kind) };
+      try {
+        const { account, guild } = await expressionTarget(item.guildId, signal);
+        label.guildName = guild?.name || null;
+        const key = `${item.guildId}:${item.kind}`;
+        if (!taken.has(key)) taken.set(key, new Set((await account.client[item.kind === 'emoji' ? 'listGuildEmojis' : 'listGuildStickers'](item.guildId)).map((existing) => existing.name?.toLowerCase())));
+        if (taken.get(key).has(label.name.toLowerCase())) { result.skipped.push({ ...label, reason: `the server already has ${item.kind === 'emoji' ? 'an emoji' : 'a sticker'} with this name` }); continue; }
+        const created = await (item.kind === 'emoji' ? createEmoji : createSticker)(service, { guildId: item.guildId, filePath: item.filePath, name: label.name, ...(item.tags ? { tags: item.tags } : {}), reason: 'Requested by the owner through Nova' }, { signal });
+        taken.get(key).add(label.name.toLowerCase());
+        result.uploaded.push({ ...label, ...(created.emoji ? { emoji: created.emoji } : { sticker: created.sticker }) });
+      } catch (error) {
+        if (signal?.aborted) throw error;
+        result.failed.push({ ...label, error: String(error.message).slice(0, 300), sendStatus: error.sendStatus || 'rejected' });
+        if (error.sendStatus === 'unknown') { result.notAttempted = items.length - index - 1; break; }
+      }
+    }
+    return result;
   };
 
   send.controls = async (trigger, signal) => {

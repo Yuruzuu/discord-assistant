@@ -1,6 +1,6 @@
 import { readdir, readFile, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { basename, extname, isAbsolute, join } from 'node:path';
+import { basename, dirname, extname, isAbsolute, join } from 'node:path';
 import { detectImageMime } from './discord-api.mjs';
 import { assertSnowflake } from './discord-url.mjs';
 import { assertReason, createResource } from './guild-admin.mjs';
@@ -21,6 +21,9 @@ function kindSpec(kind) {
   if (!Object.hasOwn(EXPRESSION_KINDS, kind)) throw new Error('kind must be emoji or sticker');
   return EXPRESSION_KINDS[kind];
 }
+
+const IMAGE_EXTENSIONS = new Set(Object.values(EXPRESSION_KINDS).flatMap((spec) => spec.extensions));
+const byName = (a, b) => a.localeCompare(b, 'en', { numeric: true });
 
 export function localPath(path, field = 'filePath') {
   if (typeof path !== 'string' || !path.trim() || path.length > 4096) throw new Error(`${field} must be a non-empty path`);
@@ -119,7 +122,7 @@ export async function importExpressionFolder(service, { guildId, folderPath, kin
   const folder = localPath(folderPath, 'folderPath');
   const files = (await readdir(folder, { withFileTypes: true }))
     .filter((entry) => entry.isFile() && !entry.name.startsWith('.') && spec.extensions.includes(extname(entry.name).toLowerCase()))
-    .map((entry) => entry.name).sort((a, b) => a.localeCompare(b, 'en', { numeric: true }));
+    .map((entry) => entry.name).sort(byName);
   if (!files.length) throw new Error(`No ${spec.extensions.join(', ')} files found directly inside ${folder}`);
 
   signal?.throwIfAborted();
@@ -154,5 +157,26 @@ export async function importExpressionFolder(service, { guildId, folderPath, kin
     accountId: account.id, guildId, kind, folder, dryRun,
     ...(dryRun ? { wouldCreate: planned } : { created }),
     skipped, failed, notAttempted: files.slice(index), ...(stopped ? { stopped } : {}),
+  };
+}
+
+// Lists one folder level so Nova can browse toward images; it reports names and sizes only and never returns file contents.
+export async function listLocalImages(folderPath, { limit = 200 } = {}) {
+  const folder = localPath(folderPath, 'folderPath');
+  const entries = (await readdir(folder, { withFileTypes: true })).filter((entry) => !entry.name.startsWith('.')).sort((a, b) => byName(a.name, b.name));
+  const folders = entries.filter((entry) => entry.isDirectory()).map((entry) => entry.name);
+  const files = entries.filter((entry) => entry.isFile() && IMAGE_EXTENSIONS.has(extname(entry.name).toLowerCase())).map((entry) => entry.name);
+  const images = [];
+  for (const name of files.slice(0, limit)) {
+    const path = join(folder, name);
+    const bytes = await stat(path).then((info) => info.size, () => null);
+    if (bytes === null) continue;
+    const fits = (kind) => EXPRESSION_KINDS[kind].extensions.includes(extname(name).toLowerCase()) && bytes <= EXPRESSION_KINDS[kind].maxBytes;
+    images.push({ name, path, bytes, emoji: fits('emoji'), sticker: fits('sticker') });
+  }
+  return {
+    folder, parent: dirname(folder) === folder ? null : dirname(folder),
+    folders: folders.slice(0, limit), images, totalImages: files.length,
+    ...(folders.length > limit || files.length > limit ? { truncated: true } : {}),
   };
 }

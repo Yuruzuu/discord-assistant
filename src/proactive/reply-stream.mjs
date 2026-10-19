@@ -1,5 +1,5 @@
 // Every reply-plan key must be listed here, or streaming aborts the turn when the model emits it.
-const planKeys = new Set(['shouldReply', 'messages', 'reactions', 'files', 'forwards', 'controls', 'images', 'channelMessages']);
+const planKeys = new Set(['shouldReply', 'messages', 'reactions', 'files', 'forwards', 'controls', 'images', 'channelMessages', 'expressionUploads']);
 
 export function createReplyStream(onMessage) {
   let buffer = '';

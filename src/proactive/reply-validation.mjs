@@ -2,6 +2,7 @@ import { z } from 'zod/v4';
 import { normalizeReactionEmoji } from '../reactions.mjs';
 import { discordEmbeds, embedSchema, embedText, linkButtonRows, linkButtonSchema } from '../rich-messages.mjs';
 import { validateGeneratedFiles } from './discord-chunks.mjs';
+import { localPath } from '../expression-uploads.mjs';
 
 const messageSchema = z.object({
   content: z.string().max(16000), gifUrl: z.string().nullable(),
@@ -17,7 +18,8 @@ function richParts({ embeds, buttons }) {
   return { converted, parts: { ...(embeds.length ? { embeds } : {}), ...(buttons.length ? { buttons } : {}) } };
 }
 const forwardSchema = z.object({ channelId: z.string().regex(/^\d{17,20}$/), messageId: z.string().regex(/^\d{17,20}$/) }).strict();
-const planSchema = z.object({ shouldReply: z.boolean(), messages: z.array(messageSchema).max(5), reactions: z.array(reactionSchema).max(3).default([]), forwards: z.array(forwardSchema).max(5).default([]), controls: z.boolean().default(false), images: z.array(z.string().regex(/^img\d{1,2}$/)).max(4).default([]), channelMessages: z.array(channelMessageSchema).max(3).default([]), files: z.array(z.object({ name: z.string(), content: z.string() }).strict()).max(3).default([]) }).strict();
+const expressionUploadSchema = z.object({ guildId: z.string().regex(/^\d{17,20}$/), kind: z.enum(['emoji', 'sticker']), filePath: z.string().min(1).max(4096), name: z.string().min(1).max(32).nullable(), tags: z.string().min(1).max(200).nullable() }).strict();
+const planSchema = z.object({ shouldReply: z.boolean(), messages: z.array(messageSchema).max(5), reactions: z.array(reactionSchema).max(3).default([]), forwards: z.array(forwardSchema).max(5).default([]), controls: z.boolean().default(false), images: z.array(z.string().regex(/^img\d{1,2}$/)).max(4).default([]), channelMessages: z.array(channelMessageSchema).max(3).default([]), expressionUploads: z.array(expressionUploadSchema).max(25).default([]), files: z.array(z.object({ name: z.string(), content: z.string() }).strict()).max(3).default([]) }).strict();
 
 export function createReplyValidator(context) {
   const allowedGifs = new Set(context.allowedGifUrls || []);
@@ -58,8 +60,14 @@ export function createReplyValidator(context) {
       if (!item.content.trim() && !converted.length) throw new Error('Codex generated an empty channel message');
       return { channelId: item.channelId, content: item.content, notify: item.notify, ...parts };
     });
-    if (!parsed.messages.length && !files.length && !forwards.length && !images.length && !channelMessages.length) throw new Error('Codex chose to reply without providing any messages');
-    return { shouldReply: parsed.shouldReply, messages: parsed.messages.map(validateParsedMessage), ...(reactions.length ? { reactions } : {}), ...(files.length ? { files } : {}), ...(forwards.length ? { forwards } : {}), ...(parsed.controls ? { controls: true } : {}), ...(images.length ? { images } : {}), ...(channelMessages.length ? { channelMessages } : {}) };
+    // Uploads read the owner's own files and reach any server the bot can see, so only the owner DM may plan them.
+    if (parsed.expressionUploads.length && !context.directMessages) throw new Error('Codex tried to upload emojis or stickers outside the owner DM');
+    const expressionUploads = [...new Map(parsed.expressionUploads.map(({ guildId, kind, filePath, name, tags }) => {
+      localPath(filePath);
+      return [`${guildId}:${kind}:${filePath}`, { guildId, kind, filePath, ...(name ? { name } : {}), ...(tags ? { tags } : {}) }];
+    })).values()];
+    if (!parsed.messages.length && !files.length && !forwards.length && !images.length && !channelMessages.length && !expressionUploads.length) throw new Error('Codex chose to reply without providing any messages');
+    return { shouldReply: parsed.shouldReply, messages: parsed.messages.map(validateParsedMessage), ...(reactions.length ? { reactions } : {}), ...(files.length ? { files } : {}), ...(forwards.length ? { forwards } : {}), ...(parsed.controls ? { controls: true } : {}), ...(images.length ? { images } : {}), ...(channelMessages.length ? { channelMessages } : {}), ...(expressionUploads.length ? { expressionUploads } : {}) };
   }
 
   return { message, plan };

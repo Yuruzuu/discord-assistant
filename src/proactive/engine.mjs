@@ -23,7 +23,7 @@ export function createProactiveEngine({ botUserId, guildId, channelId, directMes
   const cancellation = new AbortController();
   const statusUpdates = new Map();
   if (!queueModes.includes(queueMode)) throw new Error('Unknown queue mode');
-  const statistics = { received: 0, triggered: 0, steered: 0, overflowed: 0, replyBatches: 0, sentMessages: 0, streamedMessages: 0, progressMessages: 0, progressErrors: 0, forwards: 0, channelMessages: 0, reactions: 0, reactionErrors: 0, lastReactionError: null, lastFirstResponseMs: null, lastFirstActivityMs: null, skipped: 0, errors: 0, queued: 0, lastError: null };
+  const statistics = { received: 0, triggered: 0, steered: 0, overflowed: 0, replyBatches: 0, sentMessages: 0, streamedMessages: 0, progressMessages: 0, progressErrors: 0, forwards: 0, channelMessages: 0, expressionUploads: 0, reactions: 0, reactionErrors: 0, lastReactionError: null, lastFirstResponseMs: null, lastFirstActivityMs: null, skipped: 0, errors: 0, queued: 0, lastError: null };
   let busy = false;
   let stopped = false;
   let lastReplyAt = -Infinity;
@@ -78,6 +78,26 @@ export function createProactiveEngine({ botUserId, guildId, channelId, directMes
     if (lines.length) await counted(sendReplies.confirmation(lines.join('\n'), trigger, signal));
     // Posts elsewhere are counted in channelMessages only, whether or not a later one fails.
     if (failure) { failure.sentMessages = []; throw failure; }
+  }
+
+  // The host reports every upload, skip and failure itself, so the owner sees exactly what reached each server whatever the model said.
+  async function uploadExpressions(items, trigger, signal) {
+    const result = await sendReplies.expressionUploads(items, trigger, signal);
+    statistics.expressionUploads += result.uploaded.length;
+    const server = (item) => item.guildName ? `**${item.guildName}**` : `server ${item.guildId}`;
+    const lines = [
+      ...result.uploaded.map((item) => item.emoji ? `Uploaded emoji ${item.emoji.markup || `:${item.name}:`} to ${server(item)}` : `Uploaded sticker **${item.name}** to ${server(item)}`),
+      ...result.skipped.map((item) => `Skipped ${item.file} for ${server(item)}: ${item.reason}`),
+      ...result.failed.map((item) => `Couldn’t upload ${item.file} to ${server(item)}: ${item.error}`),
+      ...(result.notAttempted ? [`Stopped before ${result.notAttempted} more file${result.notAttempted === 1 ? '' : 's'} because an upload’s outcome is unknown; check the server before asking again.`] : []),
+    ];
+    let text = '';
+    for (const [index, line] of lines.entries()) {
+      const more = `\n…and ${lines.length - index} more`;
+      if (text.length + line.length + more.length + 1 > 2000) { text += more; break; }
+      text += `${text ? '\n' : ''}${line}`;
+    }
+    if (text) await counted(sendReplies.confirmation(text, trigger, signal, { key: 'expression-confirmation', suffix: 'ke' }));
   }
 
   function takeAllBatches() {
@@ -239,6 +259,7 @@ export function createProactiveEngine({ botUserId, guildId, channelId, directMes
       if (response.files?.length) await counted(sendReplies.files(response.files, trigger, signal, { replyToMessageId: streamed || sent.sentMessages.length ? undefined : replyToMessageId }));
       if (response.images?.length) await counted(sendReplies.images(response.images, trigger, signal));
       if (response.channelMessages?.length) await postElsewhere(response.channelMessages, trigger, signal);
+      if (response.expressionUploads?.length) await uploadExpressions(response.expressionUploads, trigger, signal);
       if (response.forwards?.length) { const forwarded = await counted(sendReplies.forwards(response.forwards, trigger, signal)); statistics.forwards += forwarded; }
       if (response.controls) await sendReplies.controls?.(trigger, signal);
       timing('delivery', deliveryStartedAt);

@@ -80,7 +80,9 @@ These are summarised here. The full list is in
    host validates it (`reply-validation.mjs`) and only then sends. Worker tools
    are read-only. Posting outside the current conversation (`channelMessages`)
    is owner-DM-only, limited to server text channels, blocked after
-   connected-app reads, and confirmed back to the owner. Supplied owner-DM
+   connected-app reads, and confirmed back to the owner. Emoji/sticker uploads
+   from the owner's computer (`expressionUploads`, `local_list_images`) follow
+   the same owner-DM-only rules and are reported back by the host. Supplied owner-DM
    proposal tools prepare immutable app/schedule/handoff requests; a separate
    exact owner approval or explicit control authorizes host execution.
 4. **No duplicate sends.** Every send uses a nonce with `enforce_nonce`. Nova

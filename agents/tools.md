@@ -62,7 +62,7 @@ The MCP server registers every `read-tools` tool not already defined in
 | `discord_create_emoji` / `discord_create_sticker` | `expression-uploads.createEmoji` / `createSticker` | Needs Create Expressions. Exactly one of `filePath` (absolute local path or `~`) or `imageUrl` (Discord CDN only, via `fetchImage`). Extension, size and file signature checked before upload. Emoji: PNG/JPEG/GIF/WebP ≤ 256 KiB, JSON data URI. Sticker: PNG/APNG/GIF ≤ 512 KiB, multipart; `tags` default to the name. POST, never retried |
 | `discord_import_expressions` | `expression-uploads.importExpressionFolder` | Non-recursive folder import (no dotfiles), file-name order, ≤ 50 per call, names from files. `skipExisting` (default) makes re-runs safe; `dryRun` previews. Per-file rejections continue; 403, full slots (30008/30039) and unknown outcomes stop. Returns `created`/`wouldCreate`, `skipped`, `failed`, `notAttempted` |
 
-The administration and expression upload tools are MCP-only (trusted local callers). Nova's worker has no equivalent, and its reply plan cannot create channels, roles, emojis or stickers or read local images.
+The administration tools are MCP-only (trusted local callers); Nova's reply plan cannot create channels or roles. Nova can upload emojis and stickers from the owner DM through its own `expressionUploads` reply action (see [nova-pipeline.md](nova-pipeline.md)).
 
 ### Nova lifecycle (`src/proactive/tools.mjs` → `controller.mjs`)
 
@@ -93,6 +93,7 @@ exposes the full field sets.
 | `discord_message_context`, `discord_browse_messages` | channels in own guild | any guild channel + this owner DM |
 | `web_read_link` | if `settings.web !== false` | same |
 | `project_list` / `project_search` / `project_read_file` | never | if `projectRoots` configured |
+| `local_list_images` | never | any folder on the owner's computer, one level: subfolders plus image names, sizes and emoji/sticker fit, never contents. Not on MCP. Off with `localFiles: false`. Closes `web_read_link` for the rest of the turn |
 | `apps_list_tools` / `apps_call_tool` | never | read-only connected-app calls; `access: action` discovers separately approved actions |
 | `apps_prepare_action` | never | exact immutable write proposal, separate owner approval |
 | `nova_list_schedules` / `nova_prepare_reminder` / `nova_prepare_alert` | never | inspect schedules or prepare separately approved creations |
@@ -117,7 +118,7 @@ most 12). The model may list them in the reply plan's `images`, and the sender
 uploads them through `sendMessageImages` (≤ 4, 8 MiB each, 20 MiB total). Live
 screenshots of web UIs are not supported.
 
-`readTools.forwardSource({channelId, messageId})` and `readTools.sendTarget(channelId)` are **not** model tools. `sendTarget` gates `channelMessages`: owner DM only, server text channels and threads only, refused after connected-app reads in the turn. The
+`readTools.forwardSource({channelId, messageId})`, `readTools.sendTarget(channelId)` and `readTools.expressionTarget(guildId)` are **not** model tools. `sendTarget` gates `channelMessages`: owner DM only, server text channels and threads only, refused after connected-app reads in the turn. `expressionTarget` gates `expressionUploads` the same way (owner DM only, any server the bot can see, refused after connected-app reads). The
 reply sender uses it to scope-check Nova's planned forwards with the same rules.
 
 ## Changing a tool

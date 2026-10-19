@@ -9,6 +9,7 @@ import { readPdfAttachment } from './pdf-reader.mjs';
 import { reminderScheduleSchema, alertScheduleSchema } from './schedules.mjs';
 import { directMessageOwnerId } from './target.mjs';
 import { projectToolResult } from './tool-projection.mjs';
+import { listLocalImages } from '../expression-uploads.mjs';
 
 const snowflake = z.string().regex(/^\d{17,20}$/);
 
@@ -17,6 +18,7 @@ export function createDiscordReadTools(service, scope, options = {}) {
   const tools = new Map();
   const storedResults = new Map();
   let appDataRead = false;
+  let localDataRead = false;
   const shareableImages = new Map();
   const now = options.now || Date.now;
   const resultBudget = Math.max(4096, options.maxResultBytes || (scope.trustedLocal ? 128 : 32) * 1024);
@@ -34,7 +36,7 @@ export function createDiscordReadTools(service, scope, options = {}) {
 
   function register(name, description, fields, execute) {
     const schema = z.strictObject(readToolFields(name, scope) || fields);
-    tools.set(name, { name, schema, execute, scope: name.startsWith('project_') ? 'approved-projects-dm' : name.startsWith('apps_') ? 'connected-apps-dm' : 'conversation', sideEffects: false, spec: { type: 'function', name, description, inputSchema: z.toJSONSchema(schema, { io: 'input' }) } });
+    tools.set(name, { name, schema, execute, scope: name.startsWith('project_') ? 'approved-projects-dm' : name.startsWith('apps_') ? 'connected-apps-dm' : name.startsWith('local_') ? 'owner-computer-dm' : 'conversation', sideEffects: false, spec: { type: 'function', name, description, inputSchema: z.toJSONSchema(schema, { io: 'input' }) } });
   }
 
   async function guild(guildId) {
@@ -83,6 +85,14 @@ export function createDiscordReadTools(service, scope, options = {}) {
     const target = await service.resolveChannel(channelId);
     if (!target.channel.guild_id || ![0, 5, 10, 11, 12].includes(target.channel.type)) throw new Error('Nova can only post in server text channels and threads');
     return target;
+  }
+
+  // Uploads reach any server the bot can see, so like posting elsewhere they are owner-DM-only and refused once private app data was read this turn.
+  async function expressionTarget(guildId) {
+    if (scope.trustedLocal || !scope.directMessages) throw new Error('Only the owner DM can ask Nova to upload emojis or stickers');
+    if (options.localFiles === false) throw new Error('Emoji and sticker uploads are turned off in nova.json (localFiles)');
+    if (appDataRead) throw new Error('Nova will not upload emojis or stickers after reading connected-app data in the same answer');
+    return service.resolveGuild(guildId);
   }
 
   // Forwards reuse the reading scope: a server conversation can only forward from its own server, and only the owner DM can reach other servers.
@@ -148,6 +158,7 @@ export function createDiscordReadTools(service, scope, options = {}) {
     url: z.string().url(), maxCharacters: z.number().int().min(100).max(40000).default(20000),
   }, (args, signal) => {
     if (appDataRead) throw new Error('Web links are unavailable for the rest of this answer after reading connected-app data, so private data cannot leak through a URL.');
+    if (localDataRead) throw new Error('Web links are unavailable for the rest of this answer after listing folders on the owner’s computer, so file names cannot leak through a URL.');
     return readPublicLink(args, { signal, ...options.web });
   });
 
@@ -191,6 +202,16 @@ export function createDiscordReadTools(service, scope, options = {}) {
         title: z.string().min(1).max(200), projectId: z.string().min(1).max(200), harness: z.enum(['codex', 'claude-code']), model: z.string().min(1).max(200), request: z.string().min(1).max(12000),
       }, (args, signal) => options.ownerActions.prepare({ userId: directMessageOwnerId, title: args.title, request: { kind: 'handoff', configuration: args } }, signal));
     }
+  }
+
+  // Folder listing is owner-DM-only and never offered through MCP, whose local callers have their own file access.
+  if (options.localFiles !== false && scope.directMessages && !scope.trustedLocal) {
+    register('local_list_images', "List one folder on the owner's computer: its subfolders and its image files with size and whether each fits as an emoji (PNG/JPEG/GIF/WebP ≤ 256 KiB) or sticker (PNG/APNG/GIF ≤ 512 KiB). Use an absolute path or ~ (for example ~/Downloads); follow folders or parent to browse. Names only, never contents. Use it before planning expressionUploads.", {
+      folderPath: z.string().min(1).max(4096),
+    }, async ({ folderPath }) => {
+      localDataRead = true;
+      return { ...await listLocalImages(folderPath), untrustedContent: true };
+    });
   }
 
   if (options.projectRoots?.length && scope.directMessages) {
@@ -258,5 +279,5 @@ export function createDiscordReadTools(service, scope, options = {}) {
     return text.slice(0, 500);
   }
 
-  return { definitions: [...tools.values()].map((tool) => tool.spec), registry: [...tools.values()], has: (name) => tools.has(name), call, errorMessage, forwardSource, sendTarget, sharedImage: (handle) => shareableImages.get(handle) || null, beginTurn: () => { appDataRead = false; shareableImages.clear(); } };
+  return { definitions: [...tools.values()].map((tool) => tool.spec), registry: [...tools.values()], has: (name) => tools.has(name), call, errorMessage, forwardSource, sendTarget, expressionTarget, sharedImage: (handle) => shareableImages.get(handle) || null, beginTurn: () => { appDataRead = false; localDataRead = false; shareableImages.clear(); } };
 }
