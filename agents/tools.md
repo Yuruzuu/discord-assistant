@@ -14,7 +14,7 @@ becomes an `isError` result with structured `error` fields: `nonce` and
 for batches. Tools are read-only by default (`readOnlyHint: true`), and write
 tools spread `writeAnnotations`.
 
-## MCP tools (42)
+## MCP tools (45)
 
 R = read-only, W = write. The **Schema** column says where the input schema is
 defined.
@@ -59,8 +59,10 @@ The MCP server registers every `read-tools` tool not already defined in
 | `discord_create_channel` / `discord_create_category` | `guild-admin.createChannel` / `createCategory` | Needs Manage Channels. POST, never retried; 5xx or network failures say the outcome is unknown. Optional audit-log `reason` |
 | `discord_create_role` | `guild-admin.createRole` | Needs Manage Roles. Permissions are a decimal bitfield string; `color` is an integer or `#RRGGBB` |
 | `discord_add_role` / `discord_remove_role` | `guild-admin.addMemberRole` / `removeMemberRole` | Idempotent PUT/DELETE. Refuses the @everyone role |
+| `discord_create_emoji` / `discord_create_sticker` | `expression-uploads.createEmoji` / `createSticker` | Needs Create Expressions. Exactly one of `filePath` (absolute local path or `~`) or `imageUrl` (Discord CDN only, via `fetchImage`). Extension, size and file signature checked before upload. Emoji: PNG/JPEG/GIF/WebP ≤ 256 KiB, JSON data URI. Sticker: PNG/APNG/GIF ≤ 512 KiB, multipart; `tags` default to the name. POST, never retried |
+| `discord_import_expressions` | `expression-uploads.importExpressionFolder` | Non-recursive folder import (no dotfiles), file-name order, ≤ 50 per call, names from files. `skipExisting` (default) makes re-runs safe; `dryRun` previews. Per-file rejections continue; 403, full slots (30008/30039) and unknown outcomes stop. Returns `created`/`wouldCreate`, `skipped`, `failed`, `notAttempted` |
 
-The administration tools are MCP-only (trusted local callers). Nova's worker has no equivalent, and its reply plan cannot create channels or roles.
+The administration and expression upload tools are MCP-only (trusted local callers). Nova's worker has no equivalent, and its reply plan cannot create channels, roles, emojis or stickers or read local images.
 
 ### Nova lifecycle (`src/proactive/tools.mjs` → `controller.mjs`)
 

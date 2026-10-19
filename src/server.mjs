@@ -10,6 +10,7 @@ import { createDiscordReadTools } from './proactive/read-tools.mjs';
 import { addReaction } from './reactions.mjs';
 import { embedSchema, linkButtonSchema } from './rich-messages.mjs';
 import { addMemberRole, CREATABLE_CHANNEL_TYPES, createCategory, createChannel, createRole, removeMemberRole } from './guild-admin.mjs';
+import { createEmoji, createSticker, importExpressionFolder } from './expression-uploads.mjs';
 
 const messageFields = {
   content: z.string().max(2000).optional(),
@@ -248,6 +249,43 @@ export function createDiscordMcpServer(service, { novaOptions = {} } = {}) {
     annotations: { ...writeAnnotations, idempotentHint: true },
     inputSchema: { guildId: snowflake, userId: snowflake, roleId: snowflake, reason },
   }, async (args) => success(await removeMemberRole(service, args)));
+
+  const localFile = z.string().min(1).max(4096).optional().describe('Absolute path to an image on this computer, for example C:/Users/me/Pictures/cat.png or ~/Pictures/cat.png');
+  const discordImageUrl = z.string().url().max(2048).optional().describe("HTTPS image URL on Discord's CDN, such as an existing emoji imageUrl or a message attachment");
+  const stickerText = {
+    description: z.string().max(100).optional().describe('Empty or 2 to 100 characters'),
+    tags: z.string().min(1).max(200).optional().describe('Autocomplete tag, usually a related Unicode emoji name such as "smile"; defaults to the sticker name'),
+  };
+
+  register(server, 'discord_create_emoji', {
+    title: 'Upload Discord Emoji',
+    description: 'Upload a custom emoji to a server from a local image file (filePath) or a Discord CDN image (imageUrl). PNG, JPEG, GIF or WebP up to 256 KiB; GIFs become animated emojis. The name defaults to the cleaned file name. Only use when explicitly asked. Needs the bot to have Create Expressions (or Manage Expressions). Not retried automatically; if the outcome is unknown, list expressions before trying again.',
+    annotations: writeAnnotations,
+    inputSchema: { guildId: snowflake, name: z.string().regex(/^[A-Za-z0-9_]{2,32}$/).optional().describe('2 to 32 letters, numbers or underscores'), filePath: localFile, imageUrl: discordImageUrl, reason },
+  }, async (args) => success(await createEmoji(service, args)));
+
+  register(server, 'discord_create_sticker', {
+    title: 'Upload Discord Sticker',
+    description: 'Upload a sticker to a server from a local image file (filePath) or a Discord CDN image (imageUrl). PNG, APNG or GIF up to 512 KiB, ideally 320x320. The name defaults to the file name. Only use when explicitly asked. Needs the bot to have Create Expressions (or Manage Expressions) and a free sticker slot. Not retried automatically; if the outcome is unknown, list expressions before trying again.',
+    annotations: writeAnnotations,
+    inputSchema: { guildId: snowflake, name: z.string().min(2).max(30).optional(), filePath: localFile, imageUrl: discordImageUrl, ...stickerText, reason },
+  }, async (args) => success(await createSticker(service, args)));
+
+  register(server, 'discord_import_expressions', {
+    title: 'Upload Emojis or Stickers from a Folder',
+    description: 'Upload every supported image directly inside a local folder as server emojis or stickers, named after their files, in file-name order (up to 50 per call). Skips names the server already has by default, so re-running after a partial import is safe. Use dryRun first to show the owner what would be uploaded. Only use when explicitly asked. Stops on missing permissions, full slots or an unknown outcome and reports created, skipped, failed and notAttempted files.',
+    annotations: writeAnnotations,
+    inputSchema: {
+      guildId: snowflake,
+      folderPath: z.string().min(1).max(4096).describe('Absolute folder path on this computer (or starting with ~); subfolders are not read'),
+      kind: z.enum(['emoji', 'sticker']).default('emoji'),
+      ...stickerText,
+      skipExisting: z.boolean().default(true).describe('Skip files whose name the server already uses'),
+      dryRun: z.boolean().default(false).describe('Validate and list what would be uploaded without uploading'),
+      limit: z.number().int().min(1).max(50).default(50),
+      reason,
+    },
+  }, async (args) => success(await importExpressionFolder(service, args)));
 
   const readTools = createDiscordReadTools(service, { trustedLocal: true, directMessages: true }, novaOptions);
   for (const tool of readTools.registry) {

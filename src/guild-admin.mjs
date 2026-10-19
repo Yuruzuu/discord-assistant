@@ -10,7 +10,7 @@ function assertName(name) {
   if (typeof name !== 'string' || !name.trim() || name.length > NAME_LIMIT) throw new Error(`name must be 1 to ${NAME_LIMIT} characters`);
 }
 
-function assertReason(reason) {
+export function assertReason(reason) {
   if (reason !== undefined && (typeof reason !== 'string' || reason.length > 512)) throw new Error('reason must be a string of at most 512 characters');
 }
 
@@ -22,7 +22,7 @@ export function normalizeRoleColor(color) {
 }
 
 // Creates are POSTs and are never retried, so a failure without a 4xx answer may already have been applied; callers must check before repeating it.
-async function createResource(call, noun) {
+export async function createResource(call, noun) {
   try {
     return await call();
   } catch (error) {

@@ -76,6 +76,12 @@ bot, not the user's personal account. Personal DMs with other people are not ava
   change a server's structure or a member's roles. Create the category first and
   pass its ID as `parentId`. Creates are not retried: if the outcome is unknown,
   list the server before trying again. Pass a short `reason` for the audit log.
+- Use `discord_create_emoji` or `discord_create_sticker` to upload one image
+  when asked: pass an absolute `filePath` on this computer (or a Discord CDN
+  `imageUrl`, for example to copy an emoji from another server). When asked to
+  upload a folder, call `discord_import_expressions` with `dryRun: true` first
+  if the owner has not seen the list, then without it. Names come from file
+  names; existing names are skipped, so re-running after a stop is safe.
 - Use `discord_forward_messages` when asked to forward or share existing
   messages or attachments. It natively forwards 1 to 10 messages (URLs or
   channelId plus messageId) in order; attachments travel with their message.

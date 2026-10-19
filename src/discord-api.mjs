@@ -67,7 +67,7 @@ function connectionErrorMessage(code) {
   return `Discord connection failed (${code}).`;
 }
 
-function detectImageMime(buffer) {
+export function detectImageMime(buffer) {
   if (buffer.length >= 8 && buffer.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) {
     return 'image/png';
   }
@@ -185,6 +185,19 @@ export class DiscordApiClient {
 
   createGuildRole(guildId, payload, options) {
     return this.post(`/guilds/${guildId}/roles`, payload, options);
+  }
+
+  createGuildEmoji(guildId, payload, options) {
+    return this.post(`/guilds/${guildId}/emojis`, payload, options);
+  }
+
+  createGuildSticker(guildId, { name, description, tags, file }, options) {
+    const form = new FormData();
+    form.append('name', name);
+    form.append('description', description);
+    form.append('tags', tags);
+    form.append('file', new Blob([file.bytes], { type: file.mimeType }), file.name);
+    return this.post(`/guilds/${guildId}/stickers`, form, options);
   }
 
   addGuildMemberRole(guildId, userId, roleId, options) {

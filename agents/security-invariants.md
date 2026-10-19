@@ -56,6 +56,7 @@ needs to relax one, stop and ask the human first.
 | Nova journals each operation. An `unknown` entry blocks resending until the owner resolves it | `delivery-journal.mjs`, `reply-sender.deliver`, `channel-runtime` (`retry`) |
 | Mentions are disabled unless the MCP caller sets `allowMentions`. Nova never pings, except users mentioned in a `channelMessages` post the owner asked to notify. Roles and @everyone never ping | `allowed_mentions.parse: []`, `reply-sender.channelMessages` (`users` list) |
 | Server administration tools (`discord_create_*`, `discord_add_role`, `discord_remove_role`) are MCP-only, so Nova cannot reach them. Creates are never auto-retried, and @everyone cannot be assigned | `guild-admin.mjs`, `server.mjs` |
+| Expression uploads (`discord_create_emoji`, `discord_create_sticker`, `discord_import_expressions`) are MCP-only. Local paths must be absolute; only regular image files with an allowed extension, a matching file signature and Discord's size limit are read; URLs are limited to Discord media hosts. Uploads are never auto-retried and folder imports stop on an unknown outcome | `expression-uploads.mjs`, `discord-api.requestImage` |
 | MCP write tools are annotated `readOnlyHint: false`, and tool descriptions say "only use when explicitly asked" | `server.mjs`, `tool-results.writeAnnotations` |
 
 ## Secrets and local control

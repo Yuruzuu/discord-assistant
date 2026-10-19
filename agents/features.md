@@ -19,6 +19,7 @@ tests that cover it. Tool details are in [tools.md](tools.md).
 | Send, reply, bubbles | `discord_send_message`, `discord_reply`, `discord_send_messages` | `messaging.mjs` | `messaging`, `replies-users` |
 | **Forward messages and attachments** | `discord_forward_messages` (1–10) | `messaging.mjs` (`forwardMessages`, `forwardResolvedMessage`), `shapes.mjs` (forwarded snapshots) | `forwarding` |
 | Server administration (channels, categories, roles, member roles) | `discord_create_channel`, `discord_create_category`, `discord_create_role`, `discord_add_role`, `discord_remove_role` | `guild-admin.mjs`, `discord-api.mjs` (audit-log `reason` header) | `guild-admin` |
+| Upload emojis and stickers (single file, Discord CDN image or a local folder) | `discord_create_emoji`, `discord_create_sticker`, `discord_import_expressions` | `expression-uploads.mjs`, `discord-api.mjs` (`createGuildEmoji`, `createGuildSticker`) | `expression-uploads` |
 | Reactions | `discord_add_reaction` | `reactions.mjs` | `reactions` |
 | Web and project reading | `web_read_link`, `project_*`, `discord_research_topic`, `read_tool_result` | `read-tools.mjs`, `link-reader.mjs`, `project-tools.mjs` | `proactive-read-tools`, `proactive-context-tools` |
 
