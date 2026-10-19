@@ -174,9 +174,16 @@ Order: **reactions → remaining (unstreamed) bubbles → files → images → c
   journaled: they are idempotent by name instead (the sender lists the server's
   emojis or stickers once per server and kind and skips taken names), which also
   makes a replayed plan safe. A rejected item does not stop the rest; an unknown
-  outcome stops the batch and reports how many were not attempted. The engine
-  then sends a host-written summary (uploaded / skipped / couldn't upload) to the
-  DM and counts `statistics.expressionUploads`.
+  outcome stops the batch and reports how many were not attempted. Before the
+  first upload the engine posts a host-written live checklist to the DM
+  (`progress.renderUploadChecklist`): one line per file, grouped under its
+  folder (full path, home shown as `~`), naming the kind, the name and the
+  server. The sender's `onUpdate` reports each state change (pending → uploading
+  → uploaded / skipped / failed / not attempted), and the engine edits that one
+  message in place (`editConfirmation`, coalesced so edits never block uploads),
+  ending with "Uploaded N of M". It counts `statistics.expressionUploads`.
+  Folder browsing shows in the progress trace as
+  "📂 I'm browsing `~/Downloads/…` on your computer" with the full `folderPath`.
 - **Forwards.** Each source goes through `forwardSource`
   (`readTools.forwardSource`, which uses the same scope rules as reading). The
   sender then calls `messaging.forwardResolvedMessage`. Forwards land only in

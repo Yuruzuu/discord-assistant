@@ -1,5 +1,5 @@
 const hidden = /(?:authorization|password|secret|token|api.?key|cookie|credential)/i;
-const visibleFields = new Set(['query', 'queries', 'guildId', 'channelId', 'messageId', 'attachmentId', 'authorIds', 'channelIds', 'limit', 'limitPerSearch', 'count', 'day', 'hours', 'startLine', 'projectId', 'file', 'tool', 'access', 'taskId', 'harness', 'model', 'url']);
+const visibleFields = new Set(['query', 'queries', 'guildId', 'channelId', 'messageId', 'attachmentId', 'authorIds', 'channelIds', 'limit', 'limitPerSearch', 'count', 'day', 'hours', 'startLine', 'projectId', 'file', 'folderPath', 'tool', 'access', 'taskId', 'harness', 'model', 'url']);
 
 export function sanitizeCommand(command) {
   return String(command || '').replace(/```/g, 'ˋˋˋ').replace(/\u0000/g, '')

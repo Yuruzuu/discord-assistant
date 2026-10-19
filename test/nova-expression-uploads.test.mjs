@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { setTimeout as wait } from 'node:timers/promises';
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DiscordService } from '../src/service.mjs';
 import { validateReplyPlan } from '../src/proactive/reply-validation.mjs';
@@ -12,6 +12,7 @@ import { createDiscordReadTools } from '../src/proactive/read-tools.mjs';
 import { createReplySender } from '../src/proactive/reply-sender.mjs';
 import { createProactiveEngine } from '../src/proactive/engine.mjs';
 import { directMessageOwnerId } from '../src/proactive/target.mjs';
+import { createProgressReporter, displayLocalPath } from '../src/proactive/progress.mjs';
 
 const guildId = '100000000000000001';
 const dmId = '200000000000000004';
@@ -107,7 +108,12 @@ test('the sender uploads through the scope check, skips existing names, continue
 
   const { service: discord, uploads } = service({ emojis: [{ id: '700000000000000099', name: 'Cat' }], failWith: (payload) => payload.name === 'dog' ? json({ message: 'Invalid Form Body', code: 50035 }, 400) : null });
   const send = createReplySender(discord, { channelId: dmId, listenerId: 'fixture', directMessages: true, expressionTarget: (id) => discord.resolveGuild(id) });
-  const result = await send.expressionUploads([...items, { ...items[3], kind: 'sticker', tags: 'owl' }], trigger);
+  const updates = [];
+  const result = await send.expressionUploads([...items, { ...items[3], kind: 'sticker', tags: 'owl' }], trigger, undefined, { onUpdate: async (states) => { updates.push(states.map((item) => item.state).join(',')); } });
+  assert.equal(updates[0], 'pending,pending,pending,pending,pending', 'every file is announced before the first upload');
+  assert.ok(updates.includes('skipped,uploading,pending,pending,pending'));
+  assert.equal(updates.at(-1), 'skipped,failed,uploaded,uploaded,uploaded');
+  assert.deepEqual(result.items.map((item) => [item.path, item.guildName]), [...items, items[3]].map((item) => [item.filePath, 'Vanguards Dev']));
   assert.deepEqual(result.skipped.map((item) => item.file), ['cat.png']);
   assert.deepEqual(result.failed.map((item) => [item.file, item.sendStatus]), [['dog.png', 'rejected']]);
   assert.deepEqual(result.uploaded.map((item) => [item.name, item.kind, item.guildName]), [['fox', 'emoji', 'Vanguards Dev'], ['owl', 'emoji', 'Vanguards Dev'], ['owl', 'sticker', 'Vanguards Dev']]);
@@ -125,32 +131,78 @@ test('the sender uploads through the scope check, skips existing names, continue
   assert.equal(unknown.uploads.length, 1);
 });
 
-test('the engine reports uploads, skips and failures in the DM with its own words', async () => {
-  const confirmations = [];
+test('the engine shows a live checklist naming each file, kind, name and server before uploading, then edits it with the outcome', async () => {
+  const posts = [];
+  const edits = [];
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
   const sendReplies = async (messages) => ({ sentMessages: messages });
-  sendReplies.confirmation = async (content, trigger, signal, options) => { confirmations.push({ content, options }); return { sentMessages: [content] }; };
-  sendReplies.expressionUploads = async (items) => ({
-    uploaded: [{ guildId, guildName: 'Vanguards Dev', kind: 'emoji', file: 'fox.png', name: 'fox', emoji: { markup: '<:fox:700000000000000001>' } }, { guildId, guildName: null, kind: 'sticker', file: 'owl.png', name: 'owl', sticker: { id: '800000000000000001' } }],
-    skipped: [{ guildId, guildName: 'Vanguards Dev', file: 'cat.png', reason: 'the server already has an emoji with this name' }],
-    failed: [{ guildId, guildName: 'Vanguards Dev', file: 'dog.png', error: 'Discord API 500: Internal' }], notAttempted: items.length - 3,
-  });
+  sendReplies.confirmation = async (content, trigger, signal, options) => { posts.push({ content, options }); return { sentMessages: [{ message: { id: '700000000000000050' } }] }; };
+  sendReplies.editConfirmation = async (receipt, content) => { assert.equal(receipt.message.id, '700000000000000050'); edits.push(content); };
+  const base = [
+    { guildId, guildName: 'Vanguards Dev', kind: 'emoji', path: 'C:/art/fox.png', file: 'fox.png', name: 'fox' },
+    { guildId, guildName: null, kind: 'sticker', path: 'C:/art/owl.png', file: 'owl.png', name: 'owl' },
+    { guildId, guildName: 'Vanguards Dev', kind: 'emoji', path: 'C:/other/cat.png', file: 'cat.png', name: 'cat' },
+  ];
+  const final = [
+    { ...base[0], state: 'uploaded', emoji: { markup: '<:fox:700000000000000001>' } },
+    { ...base[1], state: 'failed', error: 'Discord API 500: Internal', sendStatus: 'unknown' },
+    { ...base[2], state: 'not-attempted' },
+  ];
+  sendReplies.expressionUploads = async (items, trigger, signal, { onUpdate }) => {
+    onUpdate(base.map((item) => ({ ...item, state: 'pending' })));
+    await gate;
+    onUpdate([{ ...base[0], state: 'uploading' }, ...base.slice(1).map((item) => ({ ...item, state: 'pending' }))]);
+    return { items: final, uploaded: [final[0]], skipped: [], failed: [final[1]], notAttempted: 1 };
+  };
   const engine = createProactiveEngine({
     botUserId, channelId: dmId, directMessages: true, batchWindowMs: 5, cooldownMs: 0,
     resolveReplyAuthor: async () => botUserId, getContext: async () => ({ recentMessages: [] }),
-    generateReply: async () => ({ shouldReply: true, messages: [{ content: 'Uploading them now!' }], expressionUploads: Array.from({ length: 5 }, () => ({ guildId, kind: 'emoji', filePath: 'C:/x.png' })) }), sendReplies,
+    generateReply: async () => ({ shouldReply: true, messages: [{ content: 'Uploading them now!' }], expressionUploads: base.map(({ guildId: id, kind, path }) => ({ guildId: id, kind, filePath: path })) }), sendReplies,
   });
   try {
-    await engine.receive({ id: '300000000000000009', channel_id: dmId, author: { id: directMessageOwnerId, bot: false }, content: 'upload my downloads stickers', mentions: [] });
-    for (let attempt = 0; attempt < 200 && !confirmations.length; attempt += 1) await wait(5);
-    assert.equal(confirmations[0].content, [
-      'Uploaded emoji <:fox:700000000000000001> to **Vanguards Dev**',
-      `Uploaded sticker **owl** to server ${guildId}`,
-      'Skipped cat.png for **Vanguards Dev**: the server already has an emoji with this name',
-      'Couldn’t upload dog.png to **Vanguards Dev**: Discord API 500: Internal',
-      'Stopped before 2 more files because an upload’s outcome is unknown; check the server before asking again.',
+    await engine.receive({ id: '300000000000000009', channel_id: dmId, author: { id: directMessageOwnerId, bot: false }, content: 'upload my art', mentions: [] });
+    for (let attempt = 0; attempt < 200 && !posts.length; attempt += 1) await wait(5);
+    assert.equal(posts[0].content, [
+      '📤 Uploading *3* files from your computer',
+      '📂 `C:/art`',
+      '⏳ `fox.png` → emoji **fox** in **Vanguards Dev**',
+      `⏳ \`owl.png\` → sticker **owl** in server ${guildId}`,
+      '📂 `C:/other`',
+      '⏳ `cat.png` → emoji **cat** in **Vanguards Dev**',
+    ].join('\n'), 'the plan is visible before anything is uploaded');
+    assert.deepEqual(posts[0].options, { key: 'expression-confirmation', suffix: 'ke' });
+    release();
+    for (let attempt = 0; attempt < 200 && !edits.at(-1)?.startsWith('📤 Uploaded'); attempt += 1) await wait(5);
+    assert.equal(edits.at(-1), [
+      '📤 Uploaded *1* of *3* files from your computer',
+      '⏹️ Stopped before *1* more file because an upload’s outcome is unknown; check the server before asking again.',
+      '📂 `C:/art`',
+      '✅ `fox.png` → emoji <:fox:700000000000000001> **fox** in **Vanguards Dev**',
+      `⚠️ \`owl.png\` → sticker **owl** in server ${guildId} · couldn’t upload: Discord API 500: Internal`,
+      '📂 `C:/other`',
+      '⏹️ `cat.png` → emoji **cat** in **Vanguards Dev** · not attempted',
     ].join('\n'));
-    assert.deepEqual(confirmations[0].options, { key: 'expression-confirmation', suffix: 'ke' });
-    for (let attempt = 0; attempt < 200 && engine.status().expressionUploads < 2; attempt += 1) await wait(5);
-    assert.equal(engine.status().expressionUploads, 2);
+    assert.equal(posts.length, 1, 'the checklist is one message edited in place');
+    for (let attempt = 0; attempt < 200 && engine.status().expressionUploads < 1; attempt += 1) await wait(5);
+    assert.equal(engine.status().expressionUploads, 1);
   } finally { engine.stop(); }
+});
+
+test('the progress trace says which folder on the computer Nova is browsing', async () => {
+  const edits = [];
+  const sent = [];
+  const progress = createProgressReporter({ intervalMs: 0, send: async (content) => { sent.push(content); return { id: 'trace' }; }, edit: async (_, content) => { edits.push(content); } });
+  const folderPath = join(homedir(), 'Downloads', 'stickers');
+  await progress.receive({ stage: 'started', toolName: 'local_list_images', callId: 'a', arguments: { folderPath } });
+  await progress.idle();
+  assert.match(sent[0], /^-# 📂 I’m browsing `~[\\/]Downloads[\\/]stickers` on your computer\.\n```\nlocal_list_images\(\{"folderPath":".*stickers"\}\)\n```$/);
+  await progress.receive({ stage: 'completed', toolName: 'local_list_images', callId: 'a', arguments: { folderPath }, resultCount: 4 });
+  for (let attempt = 0; attempt < 200 && !edits.length; attempt += 1) await wait(5);
+  assert.match(edits.at(-1), /^-# 📂 I’ve browsed `~[\\/]Downloads[\\/]stickers` on your computer and found \*4\* images\.$/);
+  await progress.finish();
+  assert.match(edits.at(-1), /^-# ✅ I browsed `~[\\/]Downloads[\\/]stickers` on your computer\.$/);
+  assert.equal(displayLocalPath('C:\\Users\\me\\Pictures', 'C:\\Users\\me'), '`~\\Pictures`');
+  assert.equal(displayLocalPath('C:/Users/me/Pictures', 'C:\\Users\\me'), '`~/Pictures`');
+  assert.equal(displayLocalPath('C:\\Users\\meX\\a', 'C:\\Users\\me'), '`C:\\Users\\meX\\a`');
 });

@@ -1,6 +1,6 @@
 import { setTimeout as wait } from 'node:timers/promises';
 import { acceptsListenerMessage, mentionsBot, directMessageOwnerId } from './target.mjs';
-import { createDecorationQueue, createProgressReporter } from './progress.mjs';
+import { createDecorationQueue, createProgressReporter, renderUploadChecklist } from './progress.mjs';
 import { shapeMessage } from '../shapes.mjs';
 
 export const queueModes = ['steer', 'followup', 'interrupt'];
@@ -80,24 +80,33 @@ export function createProactiveEngine({ botUserId, guildId, channelId, directMes
     if (failure) { failure.sentMessages = []; throw failure; }
   }
 
-  // The host reports every upload, skip and failure itself, so the owner sees exactly what reached each server whatever the model said.
+  // The host shows every file it takes from the owner's computer as a live checklist (path, kind, name, server, state), posted before the
+  // first upload and edited as each one finishes, so the owner sees exactly what is reaching which server whatever the model said.
+  // Edits are coalesced and never block the uploads; only the final checklist is awaited.
   async function uploadExpressions(items, trigger, signal) {
-    const result = await sendReplies.expressionUploads(items, trigger, signal);
+    let receipt;
+    let shown;
+    let latest;
+    let running;
+    let liveError;
+    const show = (text) => {
+      latest = text;
+      running ||= (async () => {
+        while (latest !== shown) {
+          const next = latest;
+          if (!receipt) { receipt = (await sendReplies.confirmation(next, trigger, signal, { key: 'expression-confirmation', suffix: 'ke' })).sentMessages[0]; statistics.sentMessages += 1; }
+          else await sendReplies.editConfirmation(receipt, next, trigger, signal);
+          shown = next;
+          liveError = undefined;
+        }
+      })().catch((error) => { liveError = error; }).finally(() => { running = undefined; });
+      return running;
+    };
+    const result = await sendReplies.expressionUploads(items, trigger, signal, { onUpdate: (states) => { void show(renderUploadChecklist(states)); } });
     statistics.expressionUploads += result.uploaded.length;
-    const server = (item) => item.guildName ? `**${item.guildName}**` : `server ${item.guildId}`;
-    const lines = [
-      ...result.uploaded.map((item) => item.emoji ? `Uploaded emoji ${item.emoji.markup || `:${item.name}:`} to ${server(item)}` : `Uploaded sticker **${item.name}** to ${server(item)}`),
-      ...result.skipped.map((item) => `Skipped ${item.file} for ${server(item)}: ${item.reason}`),
-      ...result.failed.map((item) => `Couldn’t upload ${item.file} to ${server(item)}: ${item.error}`),
-      ...(result.notAttempted ? [`Stopped before ${result.notAttempted} more file${result.notAttempted === 1 ? '' : 's'} because an upload’s outcome is unknown; check the server before asking again.`] : []),
-    ];
-    let text = '';
-    for (const [index, line] of lines.entries()) {
-      const more = `\n…and ${lines.length - index} more`;
-      if (text.length + line.length + more.length + 1 > 2000) { text += more; break; }
-      text += `${text ? '\n' : ''}${line}`;
-    }
-    if (text) await counted(sendReplies.confirmation(text, trigger, signal, { key: 'expression-confirmation', suffix: 'ke' }));
+    await running;
+    if (result.items.length) await show(renderUploadChecklist(result.items, { done: true, notAttempted: result.notAttempted }));
+    if (liveError) throw liveError;
   }
 
   function takeAllBatches() {

@@ -270,7 +270,7 @@ export function createDiscordReadTools(service, scope, options = {}) {
       text = projectToolResult(structured, { budget, handle: storeResult(text, structured.privateOwnerData === true) });
     }
     return { contentItems: [{ type: 'inputText', text }, ...selectedImages.map(({ image }) => ({ type: 'inputImage', imageUrl: `data:${image.mimeType};base64,${image.data}` }))], success: true,
-      resultCount: result.messageCount ?? result.messages?.length ?? result.members?.length ?? result.channels?.length ?? result.servers?.length };
+      resultCount: result.messageCount ?? result.messages?.length ?? result.members?.length ?? result.channels?.length ?? result.servers?.length ?? result.totalImages };
   }
 
   function errorMessage(error) {

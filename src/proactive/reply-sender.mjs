@@ -183,30 +183,57 @@ export function createReplySender(service, { guildId, channelId, listenerId, dir
 
   // Uploads are not messages, so instead of the delivery journal they are idempotent by name: a replayed plan skips names the server already has.
   // A rejected upload does not stop the rest; an unknown outcome does, because that file may already exist.
-  send.expressionUploads = async (items, trigger, signal) => {
-    const result = { uploaded: [], skipped: [], failed: [], notAttempted: 0 };
+  // onUpdate receives every item's state (pending, uploading, uploaded, skipped, failed, not-attempted) before the first upload and after each change, so the owner can watch it live.
+  send.expressionUploads = async (items, trigger, signal, { onUpdate = async () => {} } = {}) => {
+    const result = { items: [], uploaded: [], skipped: [], failed: [], notAttempted: 0 };
     if (!items?.length) return result;
     if (items.length > 25) throw new Error('Provide at most 25 emoji or sticker uploads');
+    const labels = result.items = items.map((item) => ({ guildId: item.guildId, guildName: null, kind: item.kind, path: item.filePath, file: basename(item.filePath), name: item.name || expressionName(item.filePath, item.kind), state: 'pending' }));
+    const targets = new Map();
+    for (const label of labels) {
+      if (!targets.has(label.guildId)) targets.set(label.guildId, await expressionTarget(label.guildId, signal).catch((error) => { if (signal?.aborted) throw error; return { error }; }));
+      label.guildName = targets.get(label.guildId).guild?.name || null;
+    }
+    const update = () => onUpdate(labels.map((label) => ({ ...label })));
+    await update();
     const taken = new Map();
     for (const [index, item] of items.entries()) {
       signal?.throwIfAborted();
-      const label = { guildId: item.guildId, kind: item.kind, file: basename(item.filePath), name: item.name || expressionName(item.filePath, item.kind) };
+      const label = labels[index];
       try {
-        const { account, guild } = await expressionTarget(item.guildId, signal);
-        label.guildName = guild?.name || null;
+        const { account, error: targetError } = targets.get(item.guildId);
+        if (targetError) throw targetError;
         const key = `${item.guildId}:${item.kind}`;
         if (!taken.has(key)) taken.set(key, new Set((await account.client[item.kind === 'emoji' ? 'listGuildEmojis' : 'listGuildStickers'](item.guildId)).map((existing) => existing.name?.toLowerCase())));
-        if (taken.get(key).has(label.name.toLowerCase())) { result.skipped.push({ ...label, reason: `the server already has ${item.kind === 'emoji' ? 'an emoji' : 'a sticker'} with this name` }); continue; }
+        if (taken.get(key).has(label.name.toLowerCase())) {
+          Object.assign(label, { state: 'skipped', reason: `the server already has ${item.kind === 'emoji' ? 'an emoji' : 'a sticker'} with this name` });
+          result.skipped.push(label); await update(); continue;
+        }
+        label.state = 'uploading'; await update();
         const created = await (item.kind === 'emoji' ? createEmoji : createSticker)(service, { guildId: item.guildId, filePath: item.filePath, name: label.name, ...(item.tags ? { tags: item.tags } : {}), reason: 'Requested by the owner through Nova' }, { signal });
         taken.get(key).add(label.name.toLowerCase());
-        result.uploaded.push({ ...label, ...(created.emoji ? { emoji: created.emoji } : { sticker: created.sticker }) });
+        Object.assign(label, { state: 'uploaded', ...(created.emoji ? { emoji: created.emoji } : { sticker: created.sticker }) });
+        result.uploaded.push(label);
       } catch (error) {
         if (signal?.aborted) throw error;
-        result.failed.push({ ...label, error: String(error.message).slice(0, 300), sendStatus: error.sendStatus || 'rejected' });
-        if (error.sendStatus === 'unknown') { result.notAttempted = items.length - index - 1; break; }
+        Object.assign(label, { state: 'failed', error: String(error.message).slice(0, 300), sendStatus: error.sendStatus || 'rejected' });
+        result.failed.push(label);
+        if (error.sendStatus === 'unknown') {
+          for (const rest of labels.slice(index + 1)) rest.state = 'not-attempted';
+          result.notAttempted = items.length - index - 1;
+          await update(); break;
+        }
       }
+      await update();
     }
     return result;
+  };
+
+  // The live upload checklist is the host's own confirmation message, edited in place; edits carry no pings.
+  send.editConfirmation = async (receipt, content, trigger, signal) => {
+    signal?.throwIfAborted();
+    const target = await resolve(trigger);
+    await target.account.client.editMessage(channelId, receipt.message.id, { content: content.slice(0, 2000), allowed_mentions: { parse: [] } }, { signal });
   };
 
   send.controls = async (trigger, signal) => {

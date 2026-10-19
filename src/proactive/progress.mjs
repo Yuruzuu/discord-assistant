@@ -1,3 +1,4 @@
+import { homedir } from 'node:os';
 import { commandTrace, sanitizeCommand } from './command-trace.mjs';
 
 const snowflake = /^\d{17,20}$/;
@@ -63,6 +64,44 @@ function appAction(args = {}) {
 }
 const host = (url) => { try { return new URL(url).hostname; } catch { return 'that link'; } };
 const filename = (file) => quote(String(file || 'that file').split(/[\\/]/).at(-1));
+// Paths on the owner's computer are shown in full (home shortened to ~) so the owner always sees exactly where Nova looked.
+export function displayLocalPath(path, home = homedir()) {
+  let text = String(path || '').trim();
+  const comparable = (value) => value.replace(/\\/g, '/').toLowerCase();
+  if (home && comparable(text).startsWith(comparable(home)) && /^([\\/]|$)/.test(text.slice(home.length))) text = `~${text.slice(home.length)}`;
+  text = sanitizeCommand(text).replace(/[\r\n`]/g, ' ').trim();
+  return `\`${text.length > 90 ? `…${text.slice(-89)}` : text || 'that folder'}\``;
+}
+
+const plain = (value, limit = 60) => sanitizeCommand(value).replace(/[\r\n`*_~|<>@#]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, limit);
+const uploadIcons = { pending: '⏳', uploading: '⬆️', uploaded: '✅', skipped: '⏭️', failed: '⚠️', 'not-attempted': '⏹️' };
+// One line per file taken from the owner's computer, grouped under its folder: which file, as which kind and name, into which server, and how it went.
+export function renderUploadChecklist(items, { done = false, notAttempted = 0 } = {}) {
+  const uploaded = items.filter((item) => item.state === 'uploaded').length;
+  const header = done
+    ? `📤 Uploaded *${uploaded}* of *${items.length}* ${items.length === 1 ? 'file' : 'files'} from your computer`
+    : `📤 Uploading *${items.length}* ${items.length === 1 ? 'file' : 'files'} from your computer`;
+  const line = (item) => {
+    const shown = item.state === 'uploaded' && item.emoji?.markup ? `emoji ${item.emoji.markup} **${plain(item.name, 32)}**` : `${item.kind} **${plain(item.name, 32)}**`;
+    const server = item.guildName ? `**${plain(item.guildName, 80)}**` : `server ${plain(item.guildId, 20)}`;
+    const outcome = { uploading: ' · uploading…', skipped: ` · skipped: ${plain(item.reason || '', 120)}`, failed: ` · couldn’t upload: ${plain(item.error || '', 160)}`, 'not-attempted': ' · not attempted' }[item.state] || '';
+    return `${uploadIcons[item.state] || '⏳'} \`${plain(item.file, 80)}\` → ${shown} in ${server}${outcome}`;
+  };
+  const lines = [header, ...(notAttempted ? [`⏹️ Stopped before *${notAttempted}* more ${notAttempted === 1 ? 'file' : 'files'} because an upload’s outcome is unknown; check the server before asking again.`] : [])];
+  let folder;
+  for (const item of items) {
+    const parent = String(item.path || '').replace(/[\\/][^\\/]*$/, '');
+    if (parent !== folder) { folder = parent; lines.push(`📂 ${displayLocalPath(parent)}`); }
+    lines.push(line(item));
+  }
+  let text = '';
+  for (const [index, entry] of lines.entries()) {
+    const more = `\n…and *${lines.length - index}* more ${lines.length - index === 1 ? 'line' : 'lines'}`;
+    if (text.length + entry.length + more.length + 1 > 2000) { text += more; break; }
+    text += `${text ? '\n' : ''}${entry}`;
+  }
+  return text;
+}
 
 const activities = {
   pdf_read: { emoji: '📄', category: 'PDF', start: () => 'I’m reading the PDF attachment.', done: () => 'I’ve read the PDF attachment.', summary: () => ['read', 'the PDF attachment'] },
@@ -90,6 +129,7 @@ const activities = {
   web_search: { emoji: '🌍', category: 'web search', start: (args) => (args.query ? `I’m searching the web for ${quote(args.query)}.` : args.url ? `I’m opening ${host(args.url)}.` : 'I’m searching the web.'), done: (args) => (args.query ? `I’ve searched the web for ${quote(args.query)}.` : args.url ? `I’ve opened ${host(args.url)}.` : 'I’ve searched the web.'), summary: (args) => (args.query ? ['searched', `the web for ${quote(args.query)}`] : args.url ? ['opened', host(args.url)] : ['searched', 'the web']) },
   apps_list_tools: { emoji: '🧩', category: 'connected apps', start: (args) => `I’m checking what ${yourApps(args)} can do.`, done: (args) => `I’ve checked ${yourApps(args)}.`, summary: (args) => ['checked', yourApps(args)] },
   apps_call_tool: { emoji: '🔌', category: 'connected app', start: (args) => { const action = appAction(args); return `I’m ${action.ing} ${action.phrase}.`; }, done: (args) => { const action = appAction(args); return `I’ve ${action.past} ${action.phrase}.`; }, summary: (args) => { const action = appAction(args); return [action.past, action.phrase]; } },
+  local_list_images: { emoji: '📂', category: 'computer folder', start: (args) => `I’m browsing ${displayLocalPath(args?.folderPath)} on your computer.`, done: (args, count) => `I’ve browsed ${displayLocalPath(args?.folderPath)} on your computer${found(count, 'image')}.`, summary: (args) => ['browsed', `${displayLocalPath(args?.folderPath)} on your computer`] },
   project_list: { emoji: '📁', category: 'projects', start: () => 'I’m checking your approved projects.', done: () => 'I’ve checked your approved projects.', summary: () => ['checked', 'your approved projects'] },
   project_search: { emoji: '🗃️', category: 'project search', start: (args) => `I’m searching your project files for ${asked(args)}.`, done: (args, count) => `I’ve searched your project files for ${asked(args)}${found(count, 'match')}.`, summary: (args) => ['searched', `your project files for ${asked(args)}`] },
   project_read_file: { emoji: '📑', category: 'project file', start: (args) => `I’m reading ${filename(args?.file)} from your project.`, done: (args) => `I’ve read ${filename(args?.file)}.`, summary: (args) => ['read', filename(args?.file)] },
