@@ -43,3 +43,16 @@ export function splitDiscordText(content, limit = 2000) {
   }
   return chunks;
 }
+
+// Discord skips link previews for URLs wrapped in <>, including masked links written as [text](<url>); code spans are left untouched.
+export function suppressLinkPreviews(content) {
+  if (typeof content !== 'string' || !content.includes('http')) return content;
+  return content.split(/(```[\s\S]*?```|`[^`\n]*`)/).map((part, index) => index % 2 ? part : part.replace(/\]\((https?:\/\/[^\s()<>]+)\)|(<?)(https?:\/\/[^\s<>]+)/g, (match, masked, opened, url) => {
+    if (masked) return `](<${masked}>)`;
+    if (opened) return match;
+    const trailing = url.match(/[.,!?;:'"*_~|\]]+$|\)+$/)?.[0] || '';
+    const kept = trailing.startsWith(')') ? trailing.slice(0, Math.max(0, (url.match(/\(/g)?.length || 0) - ((url.match(/\)/g)?.length || 0) - trailing.length))) : '';
+    const link = url.slice(0, url.length - trailing.length) + kept;
+    return `<${link}>${trailing.slice(kept.length)}`;
+  })).join('');
+}

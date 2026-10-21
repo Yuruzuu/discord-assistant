@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { setTimeout as wait } from 'node:timers/promises';
-import { splitDiscordText, validateGeneratedFiles } from '../src/proactive/discord-chunks.mjs';
+import { splitDiscordText, suppressLinkPreviews, validateGeneratedFiles } from '../src/proactive/discord-chunks.mjs';
 import { createReplySender } from '../src/proactive/reply-sender.mjs';
 import { createProgressReporter } from '../src/proactive/progress.mjs';
 import { createProactiveEngine } from '../src/proactive/engine.mjs';
@@ -42,6 +42,13 @@ test('long fenced text splits into valid chunks without breaking surrogate pairs
   const restored = chunks.map((chunk, index) => chunk.replace(index ? /^```luau\n/ : /$^/, '').replace(index < chunks.length - 1 ? /\n```$/ : /$^/, '')).join('');
   assert.equal(restored, source);
   assert.throws(() => splitDiscordText('x'.repeat(16001)), /Invalid/);
+});
+
+test('Nova text hides link previews while keeping wrapped links, masked links, code and trailing punctuation intact', () => {
+  assert.equal(suppressLinkPreviews('see https://a.com/x. and <https://b.com>'), 'see <https://a.com/x>. and <https://b.com>');
+  assert.equal(suppressLinkPreviews('[docs](https://a.com/d) (https://en.wikipedia.org/wiki/Foo_(bar))'), '[docs](<https://a.com/d>) (<https://en.wikipedia.org/wiki/Foo_(bar)>)');
+  assert.equal(suppressLinkPreviews('`https://a.com` **https://c.com**\n```\nhttps://x.y\n```'), '`https://a.com` **<https://c.com>**\n```\nhttps://x.y\n```');
+  assert.equal(suppressLinkPreviews(undefined), undefined);
 });
 
 test('generated files permit bounded text only and never accept paths, duplicate names or excessive bytes', () => {

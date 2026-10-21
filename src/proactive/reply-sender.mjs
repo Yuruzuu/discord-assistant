@@ -2,11 +2,14 @@ import { createHash } from 'node:crypto';
 import { forwardResolvedMessage, markSendStatus, sendResolvedMessage } from '../messaging.mjs';
 import { normalizeReactionEmoji } from '../reactions.mjs';
 import { linkButtonRows } from '../rich-messages.mjs';
-import { splitDiscordText, validateGeneratedFiles } from './discord-chunks.mjs';
+import { splitDiscordText, suppressLinkPreviews, validateGeneratedFiles } from './discord-chunks.mjs';
 import { shapeMessage } from '../shapes.mjs';
 import { createDecorationQueue } from './progress.mjs';
 import { createEmoji, createSticker, expressionName } from '../expression-uploads.mjs';
 import { basename } from 'node:path';
+
+// Channel posts are a single message, so links keep their previews when the <> wrapping would push the content past the limit.
+const previewlessContent = (content) => { const wrapped = suppressLinkPreviews(content); return wrapped?.length > 2000 ? content : wrapped; };
 
 export function createReplySender(service, { guildId, channelId, listenerId, directMessages = false, deliveryJournal, progressComponents, messageComponents, statusTimeoutMs = 2000, forwardSource = async () => { throw new Error('Forwarding is unavailable in this conversation'); }, sharedImage = () => null, sendTarget = async () => { throw new Error('Posting in other channels is unavailable in this conversation'); }, expressionTarget = async () => { throw new Error('Uploading emojis or stickers is unavailable in this conversation'); } }) {
   let currentTrigger;
@@ -96,7 +99,7 @@ export function createReplySender(service, { guildId, channelId, listenerId, dir
       for (const [index, message] of messages.entries()) {
         const position = offset + index;
         batch.failedMessageIndex = position;
-        const chunks = splitDiscordText([message.content, message.gifUrl].filter(Boolean).join('\n'));
+        const chunks = splitDiscordText([suppressLinkPreviews(message.content), message.gifUrl].filter(Boolean).join('\n'));
         for (const [chunkIndex, chunk] of chunks.entries()) {
           const last = chunkIndex === chunks.length - 1;
           const nonce = chunkIndex === 0 ? `${batch.batchId}:${position}` : `${batch.batchId}:${position}c${chunkIndex}`;
@@ -165,7 +168,7 @@ export function createReplySender(service, { guildId, channelId, listenerId, dir
         const nonce = `${batch.batchId}:x${index}`;
         const mentionUserIds = item.notify ? [...new Set([...item.content.matchAll(/<@!?(\d{17,20})>/g)].map((match) => match[1]))].slice(0, 5) : [];
         batch.sentMessages.push(await deliver(`${batch.batchId}:channel:${index}`, trigger, nonce, async () => ({ ...await sendResolvedMessage(target, {
-          channelId: target.channel.id, guildId: target.channel.guild_id, content: item.content || undefined, embeds: item.embeds || [], buttons: item.buttons || [], mentionUserIds, nonce,
+          channelId: target.channel.id, guildId: target.channel.guild_id, content: previewlessContent(item.content) || undefined, embeds: item.embeds || [], buttons: item.buttons || [], mentionUserIds, nonce,
         }, signal), crossChannel: true })));
       }
     });
